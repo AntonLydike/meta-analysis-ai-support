@@ -3,3 +3,5 @@ __pycache__
 *.txt
 *.jsonl
 /.venv
+webapp.db*
+*.csv

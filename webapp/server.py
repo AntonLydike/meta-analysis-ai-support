@@ -1,11 +1,60 @@
 from flask import Flask, render_template, g, request, redirect, url_for, abort
+from datetime import datetime
 import sqlite3
 import os
 from webapp.db import get_connection
+from webapp.plot import render_heatmap
+
 
 app = Flask(__name__)
 DATABASE = os.path.join(os.path.dirname(__file__), '../webapp.db')
 
+STATS_QUERY = """
+WITH human_labels AS (
+    SELECT publication_id,
+            CASE WHEN rating > ? THEN 1 ELSE 0 END AS is_relevant
+    FROM reviews
+    WHERE reviewer = 'human'
+),
+model_reviews AS (
+    SELECT 
+        SUBSTR(reviewer, 1, INSTR(reviewer, '-') - 1) AS model_name,
+        publication_id,
+        CASE WHEN rating > ? THEN 1 ELSE 0 END AS predicted_relevant
+    FROM reviews
+    WHERE reviewer != 'human'
+        AND INSTR(reviewer, '-') > 0
+),
+joined AS (
+    SELECT m.model_name, h.is_relevant, m.predicted_relevant
+    FROM model_reviews m
+    JOIN human_labels h ON m.publication_id = h.publication_id
+),
+aggregated AS (
+    SELECT
+        model_name,
+        SUM(CASE WHEN is_relevant = 1 THEN 1 ELSE 0 END) AS relevant_papers,
+        SUM(CASE WHEN is_relevant = 0 THEN 1 ELSE 0 END) AS irrelevant_papers,
+        SUM(CASE WHEN predicted_relevant = 1 AND is_relevant = 1 THEN 1 ELSE 0 END) AS true_positives,
+        SUM(CASE WHEN predicted_relevant = 1 AND is_relevant = 0 THEN 1 ELSE 0 END) AS false_positives,
+        SUM(CASE WHEN predicted_relevant = 0 AND is_relevant = 1 THEN 1 ELSE 0 END) AS false_negatives,
+        SUM(CASE WHEN predicted_relevant = 0 AND is_relevant = 0 THEN 1 ELSE 0 END) AS true_negatives
+    FROM joined
+    GROUP BY model_name
+)
+SELECT
+    model_name,
+    relevant_papers,
+    irrelevant_papers,
+    true_positives,
+    false_positives,
+    false_negatives,
+    true_negatives,
+    ROUND(1.0 * true_positives / NULLIF(true_positives + false_negatives, 0), 3) AS sensitivity,
+    ROUND(1.0 * true_negatives / NULLIF(true_negatives + false_positives, 0), 3) AS specificity
+FROM aggregated
+ORDER BY model_name;
+"""
 def get_db():
     if 'db' not in g:
         g.db = sqlite3.connect(DATABASE)
@@ -17,6 +66,12 @@ def close_connection(exception):
     db = g.pop('db', None)
     if db is not None:
         db.close()
+
+@app.context_processor
+def inject_globals():
+    return {
+        'current_year': datetime.now().year
+    }
 
 @app.route('/')
 def index():
@@ -155,3 +210,45 @@ def publication(pub_id):
         return "Publication not found", 404
 
     return render_template("publication.html", publication=publication, reviews=reviews)
+
+@app.route('/stats')
+def stats():
+    db = get_db()
+
+    thresholds = [0, 20, 50]
+
+    u_thresh = request.args.get('threshold', -1, type=int)
+    if u_thresh != -1:
+        thresholds.insert(0, u_thresh)
+    tables = []
+
+    sensitivity_map=[]
+    specificity_map=[]
+    models = []
+
+    for threshold in thresholds:
+        rows = db.execute(STATS_QUERY, (threshold, threshold)).fetchall()
+        tables.append({
+            'threshold': threshold,
+            'rows': rows
+        })
+        sensitivity_map.append(tuple(
+            row['sensitivity'] for row in rows
+        ))
+        specificity_map.append(tuple(
+            row['specificity'] for row in rows
+        ))
+        models = tuple(
+            row['model_name'] for row in rows
+        )
+    
+    sens, spec = [render_heatmap(data, models, thresholds, title) for data, title in [(sensitivity_map, 'Sensitivity'),(specificity_map, 'Specificity')]]
+
+
+
+    return render_template('model_comparison.html', 
+                           tables=tables,
+                           thresholds=thresholds,
+                           sensitivity_svg=sens,
+                           specificity_svg=spec
+                           )
