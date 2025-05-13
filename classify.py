@@ -51,7 +51,7 @@ class FMT(Flag):
 WARN = FMT.ORANGE | FMT.UNDERLINE
 ERR = FMT.RED | FMT.BOLD
 
-MODELS = ('gemma3:12b', 'deepseek-r1:14b', 'llama3.1:8b')
+MODELS = ('gemma3:12b', 'deepseek-r1:14b', 'llama3.1:8b', 'llama3.2:3b', 'gemma3:4b', 'qwen3:8b')
 
 PROMPT = """
 You are an experienced researcher performing a meta-analysis on how romantic relationships impact happiness.
@@ -207,7 +207,8 @@ if __name__ == '__main__':
 
     # classify data:
     for i, entry in enumerate(entries[start:end]):
-        if 'abstract' not in entry:
+        if 'abstract' not in entry or 'title' not in entry:
+            print(f"\n{ERR}unable to classify {i+start}: missing abstract or title{FMT.RESET}", file=sys.stderr)
             continue
         for attempt in range(ns.classification_attempts):
             res = classify_work(client, ns.model, entry, ns.stream)

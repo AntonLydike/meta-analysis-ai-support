@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ publication.title }}</title>
+    <!-- Bootstrap CSS via CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <style>body{padding:10px 0;}p,small{text-align:justify;display:inline-block}</style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="my-4">{{ publication.title }}</h1>
+
+        <div class="mb-4">
+            <h5>DOI:</h5>
+            {% if publication.doi %}
+                <p><a href="{{ publication.doi }}">{{ publication.doi }}</a></p>
+            {% else %}
+                <p class="text-muted">Missing DOI</p>
+            {% endif %}
+            <h5>Authors:</h5>
+            <p>{{ publication.authors }}</p>
+
+            <h5>Year:</h5>
+            <p>{{ publication.year }}</p>
+
+            <h5>Abstract:</h5>
+            {% if publication.abstract %}
+                <p>{{ publication.abstract }}</p>
+            {% else %}
+                <p class="text-muted">Missing Abstract</p>
+            {% endif %}
+        </div>
+
+        <h2>Reviews</h2>
+        {% if reviews %}
+            <ul class="list-group">
+            {% for r in reviews %}
+                <li class="list-group-item">
+                    <strong>{{ r.reviewer }}:</strong>
+                    <!-- Add color to the rating using a badge -->
+                    {% if r.rating == 0 %}
+                        <span class="badge bg-danger">{{ r.rating }}</span>
+                    {% elif r.rating > 0 and r.rating <= 50 %}
+                        <span class="badge bg-warning text-dark">{{ r.rating }}</span>
+                    {% elif r.rating > 50 %}
+                        <span class="badge bg-success">{{ r.rating }}</span>
+                    {% else %}
+                        <span class="badge bg-secondary">{{ r.rating }}</span>
+                    {% endif %}
+                    <br>
+                    <small>{{ r.reason }}</small>
+                </li>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p class="text-muted">No reviews available.</p>
+        {% endif %}
+
+        <a href="{{ url_for('index') }}" class="btn btn-primary mt-4">Back to Publications</a>
+
+        <hr/>
+
+        <h3>Update Human Review:</h3>
+        <form method="POST" action="{{ url_for('add_review', pub_id=publication.id) }}" class="mb-5">
+            <div class="mb-3">
+                <label for="reviewer" class="form-label">Reviewer Name</label>
+                <input type="text" class="form-control" id="reviewer" name="reviewer" required value="human" disabled>
+            </div>
+            <div class="mb-3">
+                <label for="rating" class="form-label">Rating (0–100)</label>
+                <input type="number" class="form-control" id="rating" name="rating" min="0" max="100" required>
+            </div>
+            <div class="mb-3">
+                <label for="reason" class="form-label">Reason</label>
+                <textarea class="form-control" id="reason" name="reason" rows="3"></textarea>
+            </div>
+            <button type="submit" class="btn btn-success">Submit Review</button>
+        </form>
+    </div>
+    <!-- Bootstrap JS (optional) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.min.js" crossorigin="anonymous"></script>
+</body>
+</html>
