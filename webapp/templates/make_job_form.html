@@ -1,0 +1,35 @@
+
+<form action="{{ url_for('create_job') }}" method="post" class="needs-validation" novalidate>
+    <div class="row mb-3">
+        <div class="col-md-6">
+        <label for="name" class="form-label">Job Name</label>
+        <input type="text" class="form-control" id="name" name="name" required>
+        <div class="invalid-feedback">Please enter a unique job name.</div>
+        </div>
+
+        <div class="col-md-3">
+        <label for="model" class="form-label">Model</label>
+        <select class="form-select" id="model" name="model" required>
+            <option value="">Choose a model...</option>
+            {% for m in available_models %}
+            <option value="{{ m }}">{{ m }}</option>
+            {% endfor %}
+        </select>
+        <div class="invalid-feedback">Please select a valid model.</div>
+        </div>
+
+        <div class="col-md-3">
+        <label for="repeats" class="form-label">Repeats</label>
+        <input type="number" class="form-control" id="repeats" name="repeats" min="1" value="1" required>
+        <div class="invalid-feedback">Please enter a positive integer.</div>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label for="prompt" class="form-label">Prompt</label>
+        <textarea class="form-control" id="prompt" name="prompt" rows="4" required></textarea>
+        <div class="invalid-feedback">Prompt is required.</div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Create Job</button>
+</form>

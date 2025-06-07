@@ -4,9 +4,9 @@ import sys
 from typing import TextIO
 import rispy
 import json
-import time
-import math
 import csv
+from aalib.progress import progress
+from aalib.colors import FMT
 
 SCHEMA = """
 CREATE TABLE publications (
@@ -16,17 +16,34 @@ CREATE TABLE publications (
     authors TEXT,
     abstract TEXT,
     year INTEGER,
-    raw_data TEXT
+    raw_data TEXT,
+    human_score INT,
+    human_reason TEXT
+);
+
+CREATE TABLE jobs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    repeats INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    time_created INTEGER NOT NULL,
+    time_started INTEGER NOT NULL,
+    time_taken REAL NOT NULL,
+    num_completed INTEGER NOT NULL
 );
 
 CREATE TABLE reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     publication_id INTEGER NOT NULL,
-    rating INTEGER NOT NULL,
-    reviewer TEXT,
+    job_id TEXT NOT NULL,
+    created INTEGER NOT NULL,
+    rating REAL NOT NULL,
     reason TEXT,
     raw_data TEXT,
-    FOREIGN KEY (publication_id) REFERENCES publications(id) ON DELETE CASCADE
+    FOREIGN KEY (publication_id) REFERENCES publications(id) ON DELETE CASCADE,
+    FOREIGN KEY (job_id) REFERENCES runs(id) ON DELETE CASCADE
 );
 """
 
@@ -42,33 +59,43 @@ def initialize_db(db_path: str = 'webapp.db'):
     conn.close()
 
 def get_connection(db_path: str = 'webapp.db') -> sqlite3.Connection:
-    return sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
+    conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA journal_mode=WAL;')  # Enable WAL mode
+    conn.execute('PRAGMA synchronous=NORMAL;')  # Optional: improves write performance
+    conn.commit()
+    return conn
 
 
 def read_bibliography_db(source: str):
     print("Loading bibliography...", file=sys.stderr)
-    with open(source, 'r') as bibliography_file:
-        entries = rispy.load(bibliography_file)
+    if source.endswith('.json') or source.endswith('.jsonl'):
+        with open(source, 'r') as f:
+            entries = [
+                json.loads(line) for line in f
+            ]
+    else:
+        with open(source, 'r') as bibliography_file:
+            entries = rispy.load(bibliography_file)
+
     conn = get_connection()
     cur = conn.cursor()
-    t0 = time.time()
-    for i, entry in enumerate(entries):
+
+    for i, entry in progress(enumerate(entries), count=len(entries)):
         cur.execute(
-            'INSERT INTO publications(id, title, doi, authors, abstract, year, raw_data) VALUES (?,?,?,?,?,?,?)',
+            'INSERT INTO publications(id, title, doi, authors, abstract, year, raw_data, human_score, human_reason) VALUES (?,?,?,?,?,?,?,?,?)',
             (
-                i, 
+                i,
                 entry.get('title', ''), 
                 ensure_url(entry.get('doi', '')),
                 ', '.join(entry.get('authors', [])),
                 entry.get('abstract', ''), 
                 int(entry.get('year', 0)), 
                 json.dumps(entry),
+                -1,
+                "",
             )
         )
-        print_progress(i+1,len(entries), t0)
-        # periodically commit
-        if i % 500 == 0:
-            conn.commit()
     conn.commit()
 
 def ensure_url(doi: str) -> str:
@@ -77,45 +104,6 @@ def ensure_url(doi: str) -> str:
     if not doi.startswith('https://'):
         return "{}{}".format('https://dx.doi.org/', doi)
     return doi
-
-def read_ratings(source: str):
-    letters = "abcdefghijklmnopqrstuvwxyz"
-    conn = get_connection()
-    cur = conn.cursor()
-    print(f"loading reviews '{source}'...")
-    with open(source, 'r') as f:
-        for i, line in enumerate(f):
-            if not f:
-                continue
-            data = json.loads(line)
-            cur.execute(
-                'INSERT INTO reviews (publication_id, rating, reviewer, reason, raw_data) VALUES (?,?,?,?,?)',
-                (
-                    data['id'],
-                    data['score'],
-                    "{}-{}".format(data['model'], letters[data['attempt']]),
-                    data['reason'],
-                    line
-                )
-            )
-            if i % 500 == 0:
-                conn.commit()
-
-
-def print_progress(current, total, start_time):
-    percent = 100 * current // total
-    elapsed = time.time() - start_time
-    avg_time = elapsed / (current + 1)
-    remaining = avg_time * (total - current - 1)
-
-    bar_len = 50
-    filled_len = int(bar_len * percent // 100)
-    bar = '=' * filled_len + '-' * (bar_len - filled_len)
-    size = math.ceil(math.log10(total))
-
-    print(f'\r[{bar}] {percent}% ({current:0{size}}/{total}) - ETA: {remaining:.1f}s', flush=True, end="")
-    if current == total:
-        print()
 
 def line_count(f: TextIO) -> int:
     p = f.tell()
@@ -128,17 +116,16 @@ def line_count(f: TextIO) -> int:
 def import_human_marked_irrelevant_cases(file: str):
     conn = get_connection()
     cur = conn.cursor()
-    print(f"loading reviews '{file}'...")
+    print(f"loading human reviews '{file}'...")
     with open(file, 'r', newline='') as f:
         lines=line_count(f)
         reader = csv.reader(f)
-        t0 = time.time()
 
         headers = next(reader)
         title = headers.index('Title')
         year = headers.index('Published Year')
 
-        for i, line in enumerate(reader):
+        for i, line in progress(enumerate(reader), count=lines):
             if not f:
                 continue
 
@@ -149,33 +136,48 @@ def import_human_marked_irrelevant_cases(file: str):
             pub_id = pub[0][0]
 
             cur.execute(
-                'INSERT INTO reviews (publication_id, rating, reviewer, reason, raw_data) VALUES (?,?,?,?,?)',
-                (
-                    pub_id,
-                    0,
-                    'human',
-                    '',
-                    '{}',
-                )
+                'UPDATE publications SET human_score = ? WHERE id = ?',
+                (0, pub_id)
             )
-            print_progress(i+1, lines, t0)
+
         print("fixing up relevant reviews.")
-        cur.execute('''INSERT INTO reviews (publication_id, rating, reviewer, 'reason', 'raw_data')
-SELECT p.id, 100, 'human', '', '{}'
-FROM publications p
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM reviews r
-    WHERE r.publication_id = p.id AND r.reviewer = 'human'
-);''')
+        cur.execute('UPDATE publications SET human_score = 100 WHERE human_score < 0')
         conn.commit()
+
+
+def items_left_in_job(job_id: str, count: int):
+    conn = get_connection()
+    query = """SELECT p.*, ? - COALESCE(COUNT(r.id), 0) as num 
+FROM publications as p 
+LEFT JOIN reviews as r ON p.id = r.publication_id AND r.job_id = ? 
+GROUP BY p.id 
+ORDER BY p.human_score DESC 
+HAVING num > 0"""
+    for row in conn.execute(query, (count, job_id)):
+        for _ in range(row['num']):
+            yield row
+
+def remaining_items_count(job_id: str, job_k : int | None = None):
+    conn = get_connection()
+
+    if job_k is None:
+        job_k = conn.execute('SELECT repeats FROM jobs WHERE id = ?', (job_id,)).fetchone()[0]
+    return conn.execute(
+        "SELECT SUM(num) FROM ("
+        "SELECT p.*, ? - COALESCE(COUNT(r.id), 0) as num "
+        "FROM publications as p "
+        "LEFT JOIN reviews as r ON p.id = r.publication_id AND r.job_id = ? "
+        "GROUP BY p.id "
+        "HAVING num > 0)", 
+        (job_k, job_id)
+    ).fetchone()[0]
+
 
 if __name__ == '__main__':
     import argparse
     args = argparse.ArgumentParser()
     args.add_argument('-c', '--create', help='Create database', action='store_true')
-    args.add_argument('-b', '--bib', help='bibliography file', nargs='?')
-    args.add_argument('-r','--reviews', help='review file (JSONL)', nargs='*')
+    args.add_argument('-b', '--bib', help='bibliography file (JSON or txt)', nargs='?')
     args.add_argument('--human-marked-irrelevant', help='CSV export of marked irrelevant papers', nargs='?')
 
     ns = args.parse_args()
@@ -186,8 +188,5 @@ if __name__ == '__main__':
     if ns.bib:
         read_bibliography_db(ns.bib)
 
-    for review in (ns.reviews or []):
-        read_ratings(review)
-    
     if ns.human_marked_irrelevant:
         import_human_marked_irrelevant_cases(ns.human_marked_irrelevant)

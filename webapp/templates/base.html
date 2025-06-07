@@ -7,14 +7,77 @@
 
     <!-- Bootstrap CSS via CDN -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css">
     {% block head %}{% endblock %}
 </head>
-<body>
-    <div class="container my-4">
-        {% block content %}{% endblock %}
-    </div>
+<body class="d-flex flex-column min-vh-100">
 
-    <footer class="bg-light text-center text-muted py-3 mt-5 border-top">
+
+
+
+<nav class="navbar navbar-expand-lg bg-body-tertiary">
+  <div class="container-fluid">
+    <div class="navbar-brand">
+      <svg class="bi me-2" width="32" height="24" fill="currentColor" class="bi bi-bullseye" viewBox="0 0 16 16" style="vertical-align: -0.25em;">
+        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+        <path d="M8 13A5 5 0 1 1 8 3a5 5 0 0 1 0 10m0 1A6 6 0 1 0 8 2a6 6 0 0 0 0 12"/>
+        <path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6m0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8"/>
+        <path d="M9.5 8a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/>
+      </svg>
+      MetaReview-AI
+    </div>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarScroll" aria-controls="navbarScroll" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarScroll">
+      <ul class="navbar-nav me-auto my-2 my-lg-0 " style="--bs-scroll-height: 100px;">
+
+        {% for item in nav %}
+        <li class="nav-item">
+          <a href="{{ item.url }}" class="nav-link {% if item.url == request.path %}active{% else %}{% endif %}">
+            {{item.text}}
+          </a>
+        </li>
+        {% endfor %}
+
+      </ul>
+      
+    </div>
+    {% if job_in_progress %}
+    <div class="navbar-text">
+      Running {{ job_in_progress.name }} ETA {{ job_in_progress.eta | duration }}
+    </div>
+    {% endif %}
+  </div>
+</nav>
+
+
+  
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  
+
+  <div class="d-flex flex-grow-1">
+
+    <!-- Sidebar -->
+
+
+    <!-- Main content -->
+    <main class="flex-grow-1 container my-4">
+      {% block content %}{% endblock %}
+    </main>
+
+  </div>
+
+    <footer class="bg-light text-center text-muted py-3 border-top">
       <div class="container">
         <small>
           © {{ current_year }} Anton Lydike —
@@ -27,6 +90,8 @@
 
     <!-- Optional JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <!-- Print times in localtime -->
+    <script>document.querySelectorAll('time').forEach((elm) => elm.innerText = new Date(elm.dateTime).toLocaleString())</script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

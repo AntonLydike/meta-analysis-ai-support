@@ -114,8 +114,8 @@ def classify_work(chat: ollama.Client,model: str, work: dict, stream_stdout: boo
         print(f"\n{ERR}JSON error{FMT.RESET}", file=sys.stderr, flush=True)
         # try to rescure the JSON from the response body
         new_text = chat.generate(
-            model='llama3.1:8b',
-            prompt=f"Please extract the JSON from the following response body, make sure it's properly enclosed in three backticks and a json tag. Leave an empty response if no JSON can be found.\n\n---\n{text}"
+            model=model,
+            prompt=f'Please extract the JSON from the following response body, make sure it\'s properly enclosed in three backticks and a json tag, following the schema `{{"score": Number, "reason": String}}`. Leave an empty response if no JSON can be found or fields are missing.\n\n---\n{text}'
         )['response']
         data = extract_json(new_text)
         # fail if second extraction did not work

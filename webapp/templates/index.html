@@ -8,14 +8,6 @@
 
 {% block content %}
         <h1 class="my-4">Publications</h1>
-        <div class="d-flex justify-content-between">
-            <div>
-                <a href="{{ url_for('stats') }}" class="btn btn-primary">See Model Stats 📊</a>
-            </div>
-        </div>
-
-        <br/>
-
 
         <!-- Table -->
         <table class="table table-bordered table-striped table-hover">
@@ -23,9 +15,7 @@
                 <tr>
                     <th>Title</th>
                     <th>Year</th>
-                    {% for reviewer in reviewers %}
-                        <th class="reviewer-col" style="--sort-char:'{% if sort_by == reviewer %}{{ sort_dir }}{% endif %}'">{{ reviewer }}</th>
-                    {% endfor %}
+                    <th>Score</th>
                 </tr>
             </thead>
             <tbody>
@@ -33,58 +23,51 @@
                 <tr>
                     <td><a href="{{ url_for('publication', pub_id=pub.id) }}">{{ pub.title }}</a></td>
                     <td>{{ pub.year }}</td>
-                    {% for reviewer in reviewers %}
-                        <td>
-                        {% for rating in pub[reviewer] %}
-                            {% if rating == 0 %}
-                                <span class="badge bg-danger">{{ rating }}</span>
-                            {% elif rating > 0 and rating <= 50 %}
-                                <span class="badge bg-warning text-dark">{{ rating }}</span>
-                            {% elif rating > 50 %}
-                                <span class="badge bg-success">{{ rating }}</span>
-                            {% else %}
-                                <span class="badge bg-secondary">No review</span>
-                            {% endif %}
-                        {% endfor %}
-                        </td>
-                    {% endfor %}
+                    <td>
+                        {% if pub.human_score == 0 %}
+                            <span class="badge bg-danger">{{ pub.human_score }}</span>
+                        {% elif pub.human_score > 0 and pub.human_score <= 50 %}
+                            <span class="badge bg-warning text-dark">{{ pub.human_score }}</span>
+                        {% elif pub.human_score > 50 %}
+                            <span class="badge bg-success">{{ pub.human_score }}</span>
+                        {% else %}
+                            <span class="badge bg-secondary">No review</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
 
-        <!-- Pagination controls -->
-        <div class="d-flex justify-content-between">
-            <div>
-                <span>Page {{ page }} of {{ total_pages }}</span>
-            </div>
-            <div>
-                {% if page > 1 %}
-                    <a href="{{ url_for('index', page=page-1) }}" class="btn btn-primary">Previous</a>
-                {% endif %}
-                {% if page < total_pages %}
-                    <a href="{{ url_for('index', page=page+1) }}" class="btn btn-primary">Next</a>
-                {% endif %}
-            </div>
-        </div>
     </div>
-    
-    <!-- Bootstrap JS (optional, for interactivity like tooltips, modals, etc.) -->
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.min.js" crossorigin="anonymous"></script>
-    <script>Array.from(document.querySelectorAll('.reviewer-col')).forEach(x => x.addEventListener('click', e => {
-        e.preventDefault();
-        const name = x.textContent
-        const search = new URLSearchParams(location.search)
-        if (!search.get('sort')) {
-            search.set('sort', name)
-        } else if(search.get('sort') == name) {
-            search.set('sort', '-' + name)
-        } else if(search.get('sort') == '-' + name) {
-            search.delete('sort')
-        }
-        // update query parameters
-        window.location.search = '?' + search.toString()
-    }))</script>
+{% endblock %}
 
+{% block scripts %}
+<script>
+// Bootstrap validation script
+document.querySelectorAll('.needs-validation').forEach(form => {
+form.addEventListener('submit', event => {
+    if (!form.checkValidity()) {
+    event.preventDefault()
+    event.stopPropagation()
+    }
+    form.classList.add('was-validated')
+}, false)
+})
+</script>
+<script>
+document.querySelectorAll('.reviewer-col').forEach(x => x.addEventListener('click', e => {
+    e.preventDefault();
+    const name = x.textContent
+    const search = new URLSearchParams(location.search)
+    if (!search.get('sort')) {
+        search.set('sort', name)
+    } else if(search.get('sort') == name) {
+        search.set('sort', '-' + name)
+    } else if(search.get('sort') == '-' + name) {
+        search.delete('sort')
+    }
+    // update query parameters
+    window.location.search = '?' + search.toString()
+}))</script>
 {% endblock %}

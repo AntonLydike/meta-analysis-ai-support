@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Job {{ job.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <h2>Job: {{ job.name }}</h2>
+  <ul class="list-group mb-4">
+
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+      <strong>Model:</strong>
+      <span>{{ job.model }}</span>
+    </li>
+  
+    <li class="list-group-item">
+      <strong data-bs-toggle="collapse" data-bs-target="#promptCollapse" aria-expanded="false" aria-controls="promptCollapse">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-chevron-expand" viewBox="0 0 16 16">
+          <path fill-rule="evenodd" d="M3.646 9.146a.5.5 0 0 1 .708 0L8 12.793l3.646-3.647a.5.5 0 0 1 .708.708l-4 4a.5.5 0 0 1-.708 0l-4-4a.5.5 0 0 1 0-.708m0-2.292a.5.5 0 0 0 .708 0L8 3.207l3.646 3.647a.5.5 0 0 0 .708-.708l-4-4a.5.5 0 0 0-.708 0l-4 4a.5.5 0 0 0 0 .708"/>
+        </svg> Show Prompt 
+      </strong>
+      <div class="collapse mt-2" id="promptCollapse">
+        <pre class="bg-light p-3 border rounded" style="white-space: break-spaces;">{{ job.prompt }}</pre>
+      </div>
+    </li>
+
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+      <strong>Status:</strong>
+      <span class="badge 
+        {% if job.status == 'FINISHED' %}
+          bg-success
+        {% elif job.status == 'RUNNING' %}
+          bg-info
+        {% elif job.status == 'PAUSED' %}
+          bg-danger
+        {% elif job.status == 'WAITING' %}
+          bg-secondary
+        {% else %}
+          bg-dark
+        {% endif %}
+      ">
+        {{ job.status }}
+      </span>
+    </li>
+  
+    <li class="list-group-item">
+      <strong>Progress:</strong>
+      <div class="progress" style="height: 30px; margin-top: 0.5rem;">
+        <div class="progress-bar
+          {% if job.status == 'FINISHED' %}
+            bg-success
+          {% elif job.status == 'PAUSED' %}
+            bg-danger
+          {% elif job.status == 'RUNNING' %}
+            bg-info
+          {% else %}
+            bg-secondary
+          {% endif %}"
+          role="progressbar"
+          style="width: {{ progress }}%;"
+          aria-valuenow="{{ progress }}"
+          aria-valuemin="0"
+          aria-valuemax="100">
+          {{ progress|round(1) }}%
+        </div>
+      </div>
+    </li>
+  
+    <li class="list-group-item d-flex justify-content-between align-items-center"><strong>Created:</strong> {{ job.time_created | dt }}</li>
+    <li class="list-group-item d-flex justify-content-between align-items-center"><strong>Started:</strong>
+      {% if job.time_started %}
+        {{ job.time_started | dt }}
+      {% else %}
+        N/A
+      {% endif %}
+    </li>
+    <li class="list-group-item d-flex justify-content-between align-items-center"><strong>Completed:</strong> {{ completed }} / {{ total_items }}</li>
+    <li class="list-group-item d-flex justify-content-between align-items-center"><strong>Time per item:</strong> {{ seconds_per_item | duration }}</li>
+    <li class="list-group-item d-flex justify-content-between align-items-center"><strong>Estimated time remaining:</strong> 
+      {% if estimated_remaining is not none %}
+        {{ estimated_remaining | duration }}
+      {% else %}
+        Unknown
+      {% endif %}
+    </li>
+    <li class="list-group-item d-flex justify-content-between align-items-center"><strong>Total time taken:</strong> {{ job.time_taken | duration }}</li>
+  </ul>
+
+  {% if job.status == 'RUNNING' %}
+    <a href="?status=PAUSED" class="btn btn-danger"><i class="bi bi-x-octagon"></i> Stop</a>
+  {% endif %}
+  {% if job.status == 'WAITING' %}
+    <a href="?status=PAUSED" class="btn btn-danger"><i class="bi bi-x-octagon"></i> Abort</a>
+  {% endif %}
+  {% if job.status == 'PAUSED' %}
+    <a href="?status=WAITING" class="btn btn-primary"><i class="bi bi-play"></i> Resume</a>
+  {% endif %}
+  {% if job.status == 'FINISHED' %}
+    {% if completed != total_items %}
+      <a href="?status=WAITING" class="btn btn-primary"><i class="bi bi-arrow-clockwise"></i> Re-Run Failed</a>
+    {% else %}
+      <button disabled class="btn btn-primary"><i class="bi bi-arrow-clockwise"></i> Re-Run Failed</button>
+    {% endif %}
+  {% endif %}
+
+  <h3 class="mt-5">Reviews</h3>
+
+    
+  <div class="table-responsive">
+    <table class="table table-bordered table-hover align-middle">
+      <thead class="table-light">
+          <tr>
+            <th>Publication</th>
+            <th>Year</th>
+            <th>Human Rating</th>
+            <th>Model Review</th>
+          </tr>
+      </thead>
+      <tbody>
+      {% for pub in reviews %}
+        <tr>
+          <td><a href="{{ url_for('publication', pub_id=pub.id) }}#review-{{ pub.review_id }}">{{pub.title}}</a></td>
+          <td>{{ pub.year }}</td>
+          <td>
+            {% if pub.human_score == 0 %}
+                <span class="badge bg-danger">{{ pub.human_score }}</span>
+            {% elif pub.human_score > 0 and pub.human_score <= 50 %}
+                <span class="badge bg-warning text-dark">{{ pub.human_score }}</span>
+            {% elif pub.human_score > 50 %}
+                <span class="badge bg-success">{{ pub.human_score }}</span>
+            {% else %}
+                <span class="badge bg-secondary">No review</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if pub.score == 0 %}
+                <span class="badge bg-danger">{{ pub.score }}</span>
+            {% elif pub.score > 0 and pub.score <= 50 %}
+                <span class="badge bg-warning text-dark">{{ pub.score }}</span>
+            {% elif pub.score > 50 %}
+                <span class="badge bg-success">{{ pub.score }}</span>
+            {% else %}
+                <span class="badge bg-secondary">No review</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

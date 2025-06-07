@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Publications Index{% endblock %}
+
+{% block head %}
+{% endblock %}
+
+{% block content %}
+<div class="container my-4">
+
+    <h2>Create Job:</h2>
+
+    {% include 'make_job_form.html' %}
+
+
+</div>
+<div class="container my-4">
+    <h2>Jobs Overview</h2>
+  
+    <ul class="list-group">
+  
+      {% for job in jobs %}
+        {% set total_items = item_count * job.repeats %}
+        {% set completed = job.num_completed|int %}
+        {% set progress = (completed / total_items * 100) if total_items > 0 else 0 %}
+        {% set avg_time_per_item = (job.time_taken / completed) if completed > 0 else None %}
+        {% set remaining_items = total_items - completed %}
+        {% set estimated_remaining = (avg_time_per_item * remaining_items) if avg_time_per_item is not none else None %}
+  
+        <li class="list-group-item d-flex align-items-center justify-content-between">
+  
+          <!-- Name and Model -->
+          <div>
+            <a href="{{ url_for('job_detail', job_id=job.id)}}">
+                <strong>{{ job.name }}</strong> <small class="text-muted">({{ job.model }})</small>
+            </a>
+          </div>
+  
+          <!-- Progress Bar -->
+          <div class="flex-grow-1 mx-3">
+            <div class="progress" style="height: 20px;">
+              <div class="progress-bar
+                {% if job.status == 'FINISHED' %}
+                  bg-success
+                {% elif job.status == 'PAUSED' %}
+                  bg-danger
+                {% elif job.status == 'RUNNING' %}
+                  bg-info
+                {% else %}
+                  bg-secondary
+                {% endif %}"
+                role="progressbar"
+                style="width: {{ progress }}%;"
+                aria-valuenow="{{ progress }}"
+                aria-valuemin="0"
+                aria-valuemax="100">
+                {{ progress|round(1) }}%
+              </div>
+            </div>
+          </div>
+  
+          <!-- ETA -->
+          <div style="min-width: 80px; text-align: right;">
+            {% if estimated_remaining is not none %}
+              {{ estimated_remaining | duration }}
+            {% else %}
+              -- 
+            {% endif %}
+          </div>
+  
+        </li>
+      {% else %}
+        <li class="list-group-item text-center text-muted">No jobs found.</li>
+      {% endfor %}
+  
+    </ul>
+  </div>
+  
+{% endblock %}
+
+{% block scripts %}
+{% endblock %}

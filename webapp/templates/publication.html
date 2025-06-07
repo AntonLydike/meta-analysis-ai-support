@@ -6,6 +6,18 @@
         <h1 class="my-4">{{ publication.title }}</h1>
 
         <div class="mb-4">
+            <h5>Rating:
+
+            {% if publication.human_score == 0 %}
+                <span class="badge bg-danger">{{ publication.human_score }}</span>
+            {% elif publication.human_score > 0 and publication.human_score <= 50 %}
+                <span class="badge bg-warning text-dark">{{ publication.human_score }}</span>
+            {% elif publication.human_score > 50 %}
+                <span class="badge bg-success">{{ publication.human_score }}</span>
+            {% else %}
+                <span class="badge bg-secondary">{{ publication.human_score }}</span>
+            {% endif %}</h5>
+
             <h5>DOI:</h5>
             {% if publication.doi %}
                 <p><a href="{{ publication.doi }}">{{ publication.doi }}</a></p>
@@ -30,8 +42,10 @@
         {% if reviews %}
             <ul class="list-group">
             {% for r in reviews %}
-                <li class="list-group-item">
-                    <strong>{{ r.reviewer }}:</strong>
+                <li class="list-group-item" id="review-{{ r.id }}">
+                    <strong>
+                        <a href="{{ url_for('job_detail', job_id=r.job_id)}}">{{ r.name }} ({{ r.model }}):</a>
+                    </strong>
                     <!-- Add color to the rating using a badge -->
                     {% if r.rating == 0 %}
                         <span class="badge bg-danger">{{ r.rating }}</span>
@@ -44,14 +58,16 @@
                     {% endif %}
                     <br>
                     <small>{{ r.reason }}</small>
+                    <br/><small class="text-muted">
+                        Reviewed on 
+                        {{ r.created | dt }}
+                    </small>
                 </li>
             {% endfor %}
             </ul>
         {% else %}
             <p class="text-muted">No reviews available.</p>
         {% endif %}
-
-        <a href="{{ url_for('index') }}" class="btn btn-primary mt-4">Back to Publications</a>
 
         <hr/>
 
@@ -63,11 +79,11 @@
             </div>
             <div class="mb-3">
                 <label for="rating" class="form-label">Rating (0–100)</label>
-                <input type="number" class="form-control" id="rating" name="rating" min="0" max="100" required>
+                <input type="number" class="form-control" id="rating" name="rating" min="0" max="100" value="{{publication.human_score}}" required>
             </div>
             <div class="mb-3">
                 <label for="reason" class="form-label">Reason</label>
-                <textarea class="form-control" id="reason" name="reason" rows="3"></textarea>
+                <textarea class="form-control" id="reason" name="reason" rows="3">{{publication.human_reason}}</textarea>
             </div>
             <button type="submit" class="btn btn-success">Submit Review</button>
         </form>

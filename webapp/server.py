@@ -1,37 +1,47 @@
-from flask import Flask, render_template, g, request, redirect, url_for, abort
+from flask import Flask, render_template, g, request, redirect, url_for, abort, flash
 from datetime import datetime
 import sqlite3
+import uuid
+import time
 import os
+
+from markupsafe import Markup
 from webapp.db import get_connection
 from webapp.plot import render_heatmap
+from aalib.duration import duration
 
 
 app = Flask(__name__)
-DATABASE = os.path.join(os.path.dirname(__file__), '../webapp.db')
+app.secret_key = os.environ.get("FLASK_SECRET")
+
+if app.secret_key is not None:
+    print("SECRETSSSS")
+
 
 STATS_QUERY = """
 WITH human_labels AS (
-    SELECT publication_id,
-            CASE WHEN rating > ? THEN 1 ELSE 0 END AS is_relevant
-    FROM reviews
-    WHERE reviewer = 'human'
+    SELECT id as publication_id,
+            CASE WHEN human_score > ? THEN 1 ELSE 0 END AS is_relevant
+    FROM publications
 ),
 model_reviews AS (
     SELECT 
-        SUBSTR(reviewer, 1, INSTR(reviewer, '-') - 1) AS model_name,
+        jobs.model AS model_name,
+        jobs.name as job_name,
+        jobs.id as job_id,
         publication_id,
         CASE WHEN rating > ? THEN 1 ELSE 0 END AS predicted_relevant
-    FROM reviews
-    WHERE reviewer != 'human'
-        AND INSTR(reviewer, '-') > 0
+    FROM reviews JOIN jobs ON reviews.job_id = jobs.id
 ),
 joined AS (
-    SELECT m.model_name, h.is_relevant, m.predicted_relevant
+    SELECT m.model_name, h.is_relevant, m.predicted_relevant, job_name, job_id
     FROM model_reviews m
     JOIN human_labels h ON m.publication_id = h.publication_id
 ),
 aggregated AS (
     SELECT
+        job_id,
+        job_name,
         model_name,
         SUM(CASE WHEN is_relevant = 1 THEN 1 ELSE 0 END) AS relevant_papers,
         SUM(CASE WHEN is_relevant = 0 THEN 1 ELSE 0 END) AS irrelevant_papers,
@@ -40,9 +50,11 @@ aggregated AS (
         SUM(CASE WHEN predicted_relevant = 0 AND is_relevant = 1 THEN 1 ELSE 0 END) AS false_negatives,
         SUM(CASE WHEN predicted_relevant = 0 AND is_relevant = 0 THEN 1 ELSE 0 END) AS true_negatives
     FROM joined
-    GROUP BY model_name
+    GROUP BY job_name
 )
 SELECT
+    job_id,
+    job_name,
     model_name,
     relevant_papers,
     irrelevant_papers,
@@ -55,100 +67,73 @@ SELECT
 FROM aggregated
 ORDER BY model_name;
 """
-def get_db():
-    if 'db' not in g:
-        g.db = sqlite3.connect(DATABASE)
-        g.db.row_factory = sqlite3.Row
-    return g.db
 
-@app.teardown_appcontext
-def close_connection(exception):
-    db = g.pop('db', None)
-    if db is not None:
-        db.close()
+
+def get_available_models():
+    return (
+        'llama3.1:8b', 
+        'llama3.2:3b', 
+        'gemma3:4b', 
+        'deepseek-r1:1.5b',
+        'qwen3:8b',
+        'deepseek-r1:8b',
+        )
 
 @app.context_processor
 def inject_globals():
     return {
-        'current_year': datetime.now().year
+        'current_year': datetime.now().year,
+        'available_models': get_available_models(),
+        'job_in_progress': job_in_progress(),
+        'nav': [
+            {
+                "url": '/',
+                "text": "Publications",
+                "icon": '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-book-half" viewBox="0 0 16 16"><path d="M8.5 2.687c.654-.689 1.782-.886 3.112-.752 1.234.124 2.503.523 3.388.893v9.923c-.918-.35-2.107-.692-3.287-.81-1.094-.111-2.278-.039-3.213.492zM8 1.783C7.015.936 5.587.81 4.287.94c-1.514.153-3.042.672-3.994 1.105A.5.5 0 0 0 0 2.5v11a.5.5 0 0 0 .707.455c.882-.4 2.303-.881 3.68-1.02 1.409-.142 2.59.087 3.223.877a.5.5 0 0 0 .78 0c.633-.79 1.814-1.019 3.222-.877 1.378.139 2.8.62 3.681 1.02A.5.5 0 0 0 16 13.5v-11a.5.5 0 0 0-.293-.455c-.952-.433-2.48-.952-3.994-1.105C10.413.809 8.985.936 8 1.783"/></svg>'
+            },
+            {
+                "url": '/stats',
+                "text": "Stats",
+                "icon": '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-bar-chart-line-fill" viewBox="0 0 16 16"><path d="M11 2a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v12h.5a.5.5 0 0 1 0 1H.5a.5.5 0 0 1 0-1H1v-3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3h1V7a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v7h1z"/></svg>'
+            },
+            {
+                "url": '/jobs',
+                "text": "Jobs",
+                "icon": '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-stack" viewBox="0 0 16 16"><path d="m14.12 10.163 1.715.858c.22.11.22.424 0 .534L8.267 15.34a.6.6 0 0 1-.534 0L.165 11.555a.299.299 0 0 1 0-.534l1.716-.858 5.317 2.659c.505.252 1.1.252 1.604 0l5.317-2.66zM7.733.063a.6.6 0 0 1 .534 0l7.568 3.784a.3.3 0 0 1 0 .535L8.267 8.165a.6.6 0 0 1-.534 0L.165 4.382a.299.299 0 0 1 0-.535z"/><path d="m14.12 6.576 1.715.858c.22.11.22.424 0 .534l-7.568 3.784a.6.6 0 0 1-.534 0L.165 7.968a.299.299 0 0 1 0-.534l1.716-.858 5.317 2.659c.505.252 1.1.252 1.604 0z"/></svg>'
+            },
+        ],
     }
+
+def job_in_progress():
+    conn = get_connection()
+    count = conn.execute('SELECT COUNT(*) FROM publications').fetchone()[0]
+    if res := conn.execute("SELECT * FROM jobs WHERE status = 'RUNNING'").fetchone():
+        return {
+            **res,
+            'eta': (res['time_taken'] / res['num_completed']) * (res['repeats'] * count - res['num_completed'])
+        }
+
+# register duration as a template filter:
+app.template_filter('duration')(duration)
+
+@app.template_filter()
+def dt(t: float | int):
+    t = datetime.fromtimestamp(t).astimezone().isoformat()
+    return Markup(f'<time datetime="{t}">{t}</time>')
 
 @app.route('/')
 def index():
-    db = get_db()
+    db = get_connection()
 
-    # Step 1: Get distinct reviewer names
-    reviewers = [row['reviewer'] for row in db.execute("SELECT DISTINCT reviewer FROM reviews").fetchall()]
-
-    # Step 2: Get the current page from the query parameter, default to 1
-    page = request.args.get('page', 1, type=int)
-    per_page = 1000  # Set how many publications per page
-
-    # Step 3: Fetch the total number of publications to calculate total pages
-    total_publications = db.execute("SELECT COUNT(*) FROM publications").fetchone()[0]
-    total_pages = (total_publications + per_page - 1) // per_page  # Ceiling division
-
-    # Step 4: Fetch a specific subset of publications for the current page
-    offset = (page - 1) * per_page
-
-
-    sort_by_reviewer = request.args.get('sort')
-    sort_dir = ""
-    if sort_by_reviewer is None:
-        publications = db.execute(
-            "SELECT p.id, p.title, p.year FROM publications as p ORDER BY year DESC LIMIT ? OFFSET ?",
-            (per_page, offset)
-        ).fetchall()
-    else:
-        if sort_by_reviewer.startswith('-'):
-            order = 'ASC'
-            sort_dir = '▲'
-            sort_by_reviewer = sort_by_reviewer[1:]
-        else:
-            sort_dir = '▼'
-            order = 'DESC'
-        publications = db.execute(
-            f"SELECT p.id, p.title, p.year FROM publications as p LEFT JOIN reviews as r ON r.publication_id = p.id AND r.reviewer = ? ORDER BY r.rating {order}, p.year DESC LIMIT ? OFFSET ?",
-            (sort_by_reviewer, per_page, offset)
-        ).fetchall()
-
-    # Step 5: Fetch all reviews
-    reviews = db.execute("SELECT publication_id, reviewer, rating FROM reviews").fetchall()
-
-    # Step 6: Build a lookup table: { (publication_id, reviewer) : [ratings] }
-    review_lookup = {}
-    for r in reviews:
-        key = (r['publication_id'], r['reviewer'])
-        review_lookup.setdefault(key, []).append(r['rating'])  # Keep as strings for display
-
-    # Step 7: Build final rows for template
-    rows = []
-    for pub in publications:
-        row = {
-            'id': pub['id'],
-            'title': pub['title'],
-            'year': pub['year'],
-        }
-        for reviewer in reviewers:
-            key = (pub['id'], reviewer)
-            row[reviewer] = review_lookup.get(key, [])
-        rows.append(row)
-
-    # Step 8: Return the rendered template with pagination details
     return render_template(
         'index.html',
-        publications=rows,
-        reviewers=reviewers,
-        page=page,
-        total_pages=total_pages,
-        sort_by=sort_by_reviewer,
-        sort_dir=sort_dir
+        publications=db.execute('SELECT * FROM publications').fetchall(),
     )
 
 
 @app.route('/publication/<int:pub_id>/review', methods=['POST'])
 def add_review(pub_id):
-    db = get_connection(DATABASE)
+    db = get_connection()
 
     # Validate that the publication exists
     pub = db.execute("SELECT id FROM publications WHERE id = ?", (pub_id,)).fetchone()
@@ -173,37 +158,25 @@ def add_review(pub_id):
     except (ValueError, AssertionError):
         abort(400, description="Cannot submit non-human reviews")
 
-    rev = db.execute('SELECT id FROM reviews WHERE reviewer = ? and publication_id = ?', (reviewer, pub_id)).fetchall()
-    if len(rev) > 0:
-        # update it!
-        print("updating")
-        review_id = rev[0][0]
-        db.execute('UPDATE reviews SET rating = ?, reason = ? WHERE id = ?', (rating, reason, review_id))
-    else:
-        # Insert into reviews
-        print("inserting")
-        db.execute(
-            """
-            INSERT INTO reviews (publication_id, rating, reviewer, reason, raw_data)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (pub_id, rating, reviewer, reason, '{}')
-        )
-    db.commit()
+    db.execute("UPDATE publications SET human_score = ?, human_reason = ? WHERE id = ?", (
+        rating,
+        reason,
+        pub_id,
+    ))
 
     return redirect(url_for('publication', pub_id=pub_id))
 
 
 @app.route('/publication/<int:pub_id>')
 def publication(pub_id):
-    db = get_db()
+    db = get_connection()
 
     publication = db.execute(
         "SELECT * FROM publications WHERE id = ?", (pub_id,)
     ).fetchone()
 
     reviews = db.execute(
-        "SELECT * FROM reviews WHERE publication_id = ?", (pub_id,)
+        "SELECT r.id, r.job_id, r.created, r.rating, r.reason, j.name, j.model FROM reviews AS r JOIN jobs as j ON r.job_id = j.id WHERE r.publication_id = ?", (pub_id,)
     ).fetchall()
 
     if not publication:
@@ -213,7 +186,7 @@ def publication(pub_id):
 
 @app.route('/stats')
 def stats():
-    db = get_db()
+    db = get_connection()
 
     thresholds = [0, 20, 50]
 
@@ -224,7 +197,7 @@ def stats():
 
     sensitivity_map=[]
     specificity_map=[]
-    models = []
+    jobs = []
 
     for threshold in thresholds:
         rows = db.execute(STATS_QUERY, (threshold, threshold)).fetchall()
@@ -238,13 +211,11 @@ def stats():
         specificity_map.append(tuple(
             row['specificity'] for row in rows
         ))
-        models = tuple(
-            row['model_name'] for row in rows
+        jobs = tuple(
+            row['job_name'] for row in rows
         )
     
-    sens, spec = [render_heatmap(data, models, thresholds, title) for data, title in [(sensitivity_map, 'Sensitivity'),(specificity_map, 'Specificity')]]
-
-
+    sens, spec = [render_heatmap(data, jobs, thresholds, title) for data, title in [(sensitivity_map, 'Sensitivity'),(specificity_map, 'Specificity')]]
 
     return render_template('model_comparison.html', 
                            tables=tables,
@@ -252,3 +223,91 @@ def stats():
                            sensitivity_svg=sens,
                            specificity_svg=spec
                            )
+
+
+@app.route('/create_job', methods=['POST'])
+def create_job():
+    name = request.form.get('name', '').strip()
+    model = request.form.get('model', '').strip()
+    prompt = request.form.get('prompt', '').strip()
+    repeats = request.form.get('repeats', '').strip()
+
+    if not all([name, model, prompt, repeats]):
+        flash("All fields are required.", "danger")
+        return redirect(url_for('index'))
+
+    try:
+        repeats = int(repeats)
+        if repeats < 1:
+            raise ValueError
+    except ValueError:
+        flash("Repeats must be a positive integer.", "danger")
+        return redirect(url_for('index'))
+
+    if model not in get_available_models():
+        flash("Invalid model selected.", "danger")
+        return redirect(url_for('index'))
+
+    conn = get_connection()
+    try:
+        existing = conn.execute("SELECT 1 FROM jobs WHERE name = ?", (name,)).fetchone()
+        if existing:
+            flash("A job with that name already exists.", "danger")
+            return redirect(url_for('index'))
+
+        job_id = str(uuid.uuid4())
+        now = time.time()
+        conn.execute("""
+            INSERT INTO jobs (id, name, model, prompt, repeats, status, time_created, time_started, time_taken, num_completed)
+            VALUES (?, ?, ?, ?, ?, 'WAITING', ?, 0, 0.0, '0')
+        """, (job_id, name, model, prompt, repeats, now))
+        conn.commit()
+        flash("Job created successfully.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error creating job: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('job_detail', job_id=job_id))
+
+@app.route('/job/<job_id>')
+def job_detail(job_id):
+    conn = get_connection()
+    job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    if not job:
+        abort(404)
+
+    status = request.args.get('status', None)
+    if status is not None:
+        if status not in ('WAITING', 'PAUSED'):
+            flash(f'Invalid Status "{status}"', 'danger')
+        else:
+            conn.execute("UPDATE jobs SET status = ? WHERE id = ?", (status, job_id))
+            job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+
+    total_items = job['repeats'] * conn.execute('SELECT COUNT(*) FROM publications').fetchone()[0]
+    completed = int(job['num_completed'])
+    progress = (completed / total_items * 100) if total_items else 0
+    seconds_per_item = (job['time_taken'] / completed) if completed else 0
+    estimated_remaining = (total_items - completed) * seconds_per_item if completed else None
+
+    return render_template(
+        "job_detail.html",
+        job=job,
+        total_items=total_items,
+        completed=completed,
+        progress=progress,
+        seconds_per_item=seconds_per_item,
+        estimated_remaining=estimated_remaining,
+        reviews=conn.execute("SELECT p.id, p.title, p.year, p.human_score, r.rating as score, r.id as review_id FROM publications as p JOIN reviews as r ON r.publication_id = p.id WHERE job_id = ?", (job_id,)).fetchall()
+    )
+
+@app.route('/jobs')
+def jobs():
+    conn = get_connection()
+    return render_template(
+        'jobs.html',
+        item_count=conn.execute('SELECT COUNT(*) FROM publications').fetchone()[0],
+        jobs=conn.execute("SELECT * FROM jobs ORDER BY time_created DESC").fetchall()
+    )
