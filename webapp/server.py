@@ -284,7 +284,7 @@ def job_detail(job_id):
             flash(f'Invalid Status "{status}"', 'danger')
         else:
             conn.execute("UPDATE jobs SET status = ? WHERE id = ?", (status, job_id))
-            job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            return redirect(url_for('job_detail', job_id=job_id))
 
     total_items = job['repeats'] * conn.execute('SELECT COUNT(*) FROM publications').fetchone()[0]
     completed = int(job['num_completed'])

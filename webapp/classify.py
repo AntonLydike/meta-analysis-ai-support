@@ -1,29 +1,24 @@
+from dataclasses import dataclass
 import os
+import asyncio
 import re
 import json
 import sqlite3
 import time
 import ollama
 
+from webapp.db import get_connection
+
 JSON_REGEX = re.compile(r'```(json)?\n(\{.*\})\n```', flags=re.DOTALL)
 
 
-def classify_work(chat: ollama.Client, prompt: str, model: str, work: dict, stream_stdout: bool = False) -> dict | None:
+def classify_work(chat: ollama.Client, prompt: str, model: str, work: dict) -> dict | None:
     res = chat.generate(
         model=model, 
         prompt=prompt.format(title=work['title'], abstract=work['abstract']),
-        stream=stream_stdout
+        stream=False
     )
-    if stream_stdout:
-        print(f"============= {work['title']}")
-        chunks = []
-        for chunk in res:
-            print(chunk['response'], end='', flush=True)
-            chunks.append(chunk['response'])
-        print()
-        text = "".join(chunks)
-    else:
-        text = res['response']
+    text = res['response']
     
     # read JSON from response
     data = extract_json(text)
@@ -65,11 +60,7 @@ def extract_json(text: str) -> dict | None:
         return None
 
 
-def get_ollama() -> ollama.Client:
-    return ollama.Client(host=os.environ['OLLAMA_HOST'])
-
-
-def process_item(conn: sqlite3.Connection, client: ollama.Client, job_id: str, name: str, model: str, prompt: str, pub: sqlite3.Row):
+def process_item(client: ollama.Client, job_id: str, name: str, model: str, prompt: str, pub: sqlite3.Row):
     res = classify_work(client, prompt, model, pub)
 
     # skip broken model output
@@ -79,6 +70,7 @@ def process_item(conn: sqlite3.Connection, client: ollama.Client, job_id: str, n
     res['id'] = pub['id']
     res['model'] = model
 
+    conn = get_connection()
     conn.execute('INSERT INTO reviews (publication_id, job_id, created, rating, reason, raw_data) VALUES (?,?,?,?,?,?)', (
         pub['id'],
         job_id,
@@ -89,3 +81,7 @@ def process_item(conn: sqlite3.Connection, client: ollama.Client, job_id: str, n
     ))
     conn.commit()
     return True
+
+
+def get_ollama() -> ollama.Client:
+    return ollama.Client(host=os.environ['OLLAMA_HOST'])

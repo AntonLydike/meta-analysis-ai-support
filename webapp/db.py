@@ -151,8 +151,8 @@ def items_left_in_job(job_id: str, count: int):
 FROM publications as p 
 LEFT JOIN reviews as r ON p.id = r.publication_id AND r.job_id = ? 
 GROUP BY p.id 
-ORDER BY p.human_score DESC 
-HAVING num > 0"""
+HAVING num > 0
+ORDER BY p.human_score DESC """
     for row in conn.execute(query, (count, job_id)):
         for _ in range(row['num']):
             yield row
@@ -162,7 +162,7 @@ def remaining_items_count(job_id: str, job_k : int | None = None):
 
     if job_k is None:
         job_k = conn.execute('SELECT repeats FROM jobs WHERE id = ?', (job_id,)).fetchone()[0]
-    return conn.execute(
+    res = conn.execute(
         "SELECT SUM(num) FROM ("
         "SELECT p.*, ? - COALESCE(COUNT(r.id), 0) as num "
         "FROM publications as p "
@@ -171,6 +171,8 @@ def remaining_items_count(job_id: str, job_k : int | None = None):
         "HAVING num > 0)", 
         (job_k, job_id)
     ).fetchone()[0]
+    if res is None:
+        return 10 # fallback
 
 
 if __name__ == '__main__':

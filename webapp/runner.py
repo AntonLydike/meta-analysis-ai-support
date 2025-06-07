@@ -1,3 +1,5 @@
+from asyncio import Future, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 import time
 import signal
@@ -73,15 +75,35 @@ class JobWorker:
             client = get_ollama()
             conn = get_connection()
 
-            for item in progress(items_left_in_job(job_id, repeats), count=remaining_items_count(job_id, repeats), message=f'{name} ({model})', color=FMT.BLUE):
-                t0 = time.time()
-                if process_item(conn, client, job_id, name, model, prompt, item):
-                    completed += 1
+            live_coros: list[Future[bool]] = []
+            threads = 4
 
-                time_taken += time.time() - t0
-                self._update_job_progress(job_id, completed, time_taken)
-                if not self._check_alive(job_id, conn):
-                    return
+            with ThreadPoolExecutor(threads) as exe:
+
+                t0 = time.time()
+                for item in progress(items_left_in_job(job_id, repeats), count=remaining_items_count(job_id, repeats), message=f'{name} ({model})', color=FMT.BLUE):
+
+                    while len(live_coros) > threads:
+                        coro = live_coros.pop(0)
+                        if coro.result():
+                            completed += 1
+
+                    live_coros.append(
+                        exe.submit(process_item, client, job_id, name, model, prompt, item)
+                    )
+
+                    self._update_job_progress(job_id, completed, time_taken + (time.time() - t0))
+                    if not self._check_alive(job_id, conn):
+                        for coro in live_coros:
+                            coro.cancel()
+                        return
+                print("awaiting trailing coros")
+                for res in live_coros:
+                    if res.result():
+                        completed += 1
+
+                conn.commit()
+                self._update_job_progress(job_id, completed, time_taken + (time.time() - t0))
 
             self._finalize_job(job_id)
             self.current_job_id = None
@@ -104,11 +126,12 @@ class JobWorker:
     def _finalize_job(self, job_id: str):
         conn = get_connection()
         try:
+            print(f"Completed {job_id}")
             conn.execute("""
                 UPDATE jobs
-                SET status = 'FINISHED'
+                SET status = 'FINISHED', num_completed = (SELECT COUNT(*) FROM reviews WHERE job_id = ?)
                 WHERE id = ?
-            """, (job_id,))
+            """, (job_id,job_id))
             conn.commit()
         except Exception as e:
                 print(f"Error finalizing job {job_id}: {e}")
