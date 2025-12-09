@@ -9,6 +9,7 @@ from markupsafe import Markup
 from webapp.db import get_connection
 from webapp.plot import render_heatmap
 from aalib.duration import duration
+from webapp.oai import OPENAI_MODELS
 
 
 app = Flask(__name__)
@@ -43,6 +44,8 @@ aggregated AS (
         job_id,
         job_name,
         model_name,
+        SUM(CASE WHEN predicted_relevant = 1 THEN 1 ELSE 0 END) as predicted_relevant,
+        SUM(CASE WHEN predicted_relevant = 1 THEN 0 ELSE 1 END) as predicted_irrelevant,
         SUM(CASE WHEN is_relevant = 1 THEN 1 ELSE 0 END) AS relevant_papers,
         SUM(CASE WHEN is_relevant = 0 THEN 1 ELSE 0 END) AS irrelevant_papers,
         SUM(CASE WHEN predicted_relevant = 1 AND is_relevant = 1 THEN 1 ELSE 0 END) AS true_positives,
@@ -56,6 +59,8 @@ SELECT
     job_id,
     job_name,
     model_name,
+    predicted_relevant,
+    predicted_irrelevant,
     relevant_papers,
     irrelevant_papers,
     true_positives,
@@ -65,7 +70,7 @@ SELECT
     ROUND(1.0 * true_positives / NULLIF(true_positives + false_negatives, 0), 3) AS sensitivity,
     ROUND(1.0 * true_negatives / NULLIF(true_negatives + false_positives, 0), 3) AS specificity
 FROM aggregated
-ORDER BY model_name;
+ORDER BY sensitivity DESC;
 """
 
 
@@ -77,6 +82,7 @@ def get_available_models():
         'deepseek-r1:1.5b',
         'qwen3:8b',
         'deepseek-r1:8b',
+        *OPENAI_MODELS,
         )
 
 @app.context_processor
@@ -106,11 +112,11 @@ def inject_globals():
 
 def job_in_progress():
     conn = get_connection()
-    count = conn.execute('SELECT COUNT(*) FROM publications').fetchone()[0]
     if res := conn.execute("SELECT * FROM jobs WHERE status = 'RUNNING'").fetchone():
+        count, complete = conn.execute('SELECT (SELECT COUNT(*) FROM publications) as ttl, (SELECT COUNT(*) FROM reviews WHERE job_id = ?) as complete', (res['id'],)).fetchone()
         return {
             **res,
-            'eta': (res['time_taken'] / res['num_completed']) * (res['repeats'] * count - res['num_completed'])
+            'eta': (res['time_taken'] / complete) * (res['repeats'] * count - complete) if complete else None
         }
 
 # register duration as a template filter:

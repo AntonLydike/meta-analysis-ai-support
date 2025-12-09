@@ -1,6 +1,7 @@
+from concurrent.futures import Future
 from dataclasses import dataclass
+from functools import cache
 import os
-import asyncio
 import re
 import json
 import sqlite3
@@ -53,7 +54,7 @@ def extract_json(text: str) -> dict | None:
             return None
         if 'score' not in res or 'reason' not in res:
             return None
-        if not isinstance(res['score'], int):
+        if not isinstance(res['score'], int) or not isinstance(res['reason'], str):
             return None
         return res
     except json.JSONDecodeError:
@@ -78,6 +79,59 @@ def process_item(client: ollama.Client, job_id: str, name: str, model: str, prom
         res['score'],
         res['reason'],
         json.dumps(res),
+    ))
+    conn.commit()
+    return True
+
+
+@dataclass
+class WorkItem:
+    job_id: str
+    model: str
+    prompt: str
+    work: dict
+
+async def process_item_async(w: WorkItem):
+    client = ollama.AsyncClient(host=os.environ['OLLAMA_HOST'])
+
+    text = (await client.generate(
+        model=w.model, 
+        prompt=w.prompt.format(title=w.work['title'], abstract=w.work['abstract']),
+        stream=False
+    ))['response']
+    
+    # read JSON from response
+    data = extract_json(text)
+    if data is None:
+        # try to rescure the JSON from the response body
+        new_text = (await client.generate(
+            model=w.model,
+            prompt=f'Please extract the JSON from the following response body, make sure it\'s properly enclosed in three backticks and a json tag, following the schema `{{"score": Number, "reason": String}}`. Leave an empty response if no JSON can be found or fields are missing.\n\n---\n{text}'
+        ))['response']
+        data = extract_json(new_text)
+        # fail if second extraction did not work
+        if data is None:
+            return False
+        data['re_extract'] = True
+    
+    if 'score' not in data or 'reason' not in data:
+        return False
+
+    data['re_extract'] = data.get('re_extract', False )
+    
+    data['full_text'] = text
+    
+    data['id'] = w.work['id']
+    data['model'] = w.model
+
+    conn = get_connection()
+    conn.execute('INSERT INTO reviews (publication_id, job_id, created, rating, reason, raw_data) VALUES (?,?,?,?,?,?)', (
+        w.work['id'],
+        w.job_id,
+        time.time(),
+        data['score'],
+        data['reason'],
+        json.dumps(data),
     ))
     conn.commit()
     return True

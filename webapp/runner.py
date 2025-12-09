@@ -1,21 +1,26 @@
-from asyncio import Future, as_completed
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future
+import asyncio
+from dataclasses import dataclass
 import sqlite3
 import time
 import signal
 import threading
+import tempfile
+import os
 from aalib.progress import progress
 from aalib.colors import FMT
 
-from webapp.classify import get_ollama, process_item
+from webapp.classify import WorkItem, get_ollama, process_item, process_item_async
 from webapp.db import items_left_in_job, get_connection, remaining_items_count
+from webapp.oai import process_batch, OPENAI_MODELS
 
 class JobWorker:
     """
     Processes jobs in order of creation.
     """
-    def __init__(self):
+    def __init__(self, loop: asyncio.BaseEventLoop):
         self.current_job_id = None
+        self.loop = loop
 
     def start(self):
         """Main worker loop. Registers signal handlers and begins processing jobs."""
@@ -28,7 +33,6 @@ class JobWorker:
             if job is not None:
                 self._process_job(*job)
             else:
-                print("waiting...")
                 time.sleep(.5)
 
     def _claim_next_job(self) -> tuple[str, str, str, str, int, float, int] | None:
@@ -71,45 +75,77 @@ class JobWorker:
 
 
     def _process_job(self, job_id: str, name: str, model: str, prompt: str, repeats: int, time_taken: float, completed: int):
+        if model in OPENAI_MODELS:
+            self._process_openai_job(job_id, name, model, prompt, repeats, time_taken, completed)
+            return
         try:
-            client = get_ollama()
             conn = get_connection()
 
             live_coros: list[Future[bool]] = []
-            threads = 4
+            active_coros = 10
+            remaining = remaining_items_count(job_id, repeats)
+            start_count = completed
 
-            with ThreadPoolExecutor(threads) as exe:
+            t0 = time.time()
+            for item in progress(items_left_in_job(job_id, repeats), count=remaining, message=f'{name} ({model})', color=FMT.BLUE):
+                # reduce live_coros to be at most active_coros
+                while len(live_coros) > active_coros:
+                    for c in tuple(live_coros):
+                        if not c.done():
+                            continue
+                        live_coros.remove(c)
+                        completed += c.result()
+                    if len(live_coros) > active_coros:
+                        c = live_coros.pop(0)
+                        completed += c.result()
 
-                t0 = time.time()
-                for item in progress(items_left_in_job(job_id, repeats), count=remaining_items_count(job_id, repeats), message=f'{name} ({model})', color=FMT.BLUE):
+                res = asyncio.run_coroutine_threadsafe(
+                    process_item_async(
+                        WorkItem(
+                            job_id,
+                            model,
+                            prompt,
+                            dict(item)
+                        )
+                    ), self.loop
+                )
+                live_coros.append(res)
 
-                    while len(live_coros) > threads:
-                        coro = live_coros.pop(0)
-                        if coro.result():
-                            completed += 1
-
-                    live_coros.append(
-                        exe.submit(process_item, client, job_id, name, model, prompt, item)
-                    )
-
-                    self._update_job_progress(job_id, completed, time_taken + (time.time() - t0))
-                    if not self._check_alive(job_id, conn):
-                        for coro in live_coros:
-                            coro.cancel()
-                        return
-                print("awaiting trailing coros")
-                for res in live_coros:
-                    if res.result():
-                        completed += 1
-
-                conn.commit()
                 self._update_job_progress(job_id, completed, time_taken + (time.time() - t0))
+                # check for liveness:
+                if not self._check_alive(job_id, conn):
+                    for coro in live_coros:
+                        coro.cancel()
+                    return
+
+            print("awaiting trailing coros")
+            for res in live_coros:
+                completed += res.result()
+
+            conn.commit()
+            final_time = time_taken + (time.time() - t0)
+            self._update_job_progress(job_id, completed, final_time)
+
+            if start_count + remaining != completed:
+                return self._process_job(job_id, name, model, prompt, repeats, final_time, completed)
 
             self._finalize_job(job_id)
             self.current_job_id = None
         except:
             self._pause_current_job()
             raise
+
+    def _process_openai_job(self, job_id: str, name: str, model: str, prompt: str, repeats: int, time_taken: float, completed: int):
+        process_batch(
+            job_id,
+            name,
+            model,
+            prompt,
+            repeats,
+            self._update_job_progress,
+        )
+        self._finalize_job(job_id)
+
 
     def _update_job_progress(self, job_id: str, num_completed: int, time_taken: float):
         conn = get_connection()
@@ -161,11 +197,22 @@ class JobWorker:
     def __del__(self):
         self._pause_current_job()
 
+# helper function to start and run the asyncio event loop
+def run_event_loop(loop):
+    # set the loop for the current thread
+    asyncio.set_event_loop(loop)
+    # run the event loop until stopped
+    loop.run_forever()
+
+
 if __name__ == '__main__':
-    w=JobWorker()
+    # run the loop in a separate thread:
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=run_event_loop, args=(loop,), daemon=True).start()
+
+    w=JobWorker(loop)
     try:
         w.start()
     except:
         del w
         raise
-

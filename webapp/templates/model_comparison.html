@@ -18,8 +18,8 @@
                         <tr>
                             <th>Job</th>
                             <th>Model</th>
-                            <th>Relevant</th>
-                            <th>Irrelevant</th>
+                            <th>Marked Relevant</th>
+                            <th>Marked Irrelevant</th>
                             <th title="True Positives">TP</th>
                             <th title="False Positives">FP</th>
                             <th title="False Negatives">FN</th>
@@ -33,8 +33,8 @@
                         <tr>
                             <td><a href="{{ url_for('job_detail', job_id=row['job_id']) }}">{{ row['job_name'] }}</a></td>
                             <td>{{ row['model_name'] }}</td>
-                            <td>{{ row['relevant_papers'] }}</td>
-                            <td>{{ row['irrelevant_papers'] }}</td>
+                            <td>{{ row['predicted_relevant'] }}</td>
+                            <td>{{ row['predicted_irrelevant'] }}</td>
                             <td>{{ row['true_positives'] }}</td>
                             <td>{{ row['false_positives'] }}</td>
                             <td>{{ row['false_negatives'] }}</td>
@@ -51,12 +51,12 @@
         <br/>
         <br/>
         
-        <h2 class="mb-4">Visualization</h1>
+        <h2 class="mb-4">Visualization</h2>
 
         <div class="row">
             <div class="col-md-6">
               <figure class="figure w-100">
-                <div class="figure-img d-flex justify-content-center"">
+                <div class="figure-img d-flex justify-content-center">
                   {{ sensitivity_svg | safe }}
                 </div>
                 <figcaption class="figure-caption text-center fw-semibold">Sensitivity of the models for different threshold values as reported in the tables above. Higher is better.</figcaption>
@@ -65,7 +65,7 @@
           
             <div class="col-md-6">
               <figure class="figure w-100">
-                <div class="figure-img d-flex justify-content-center"">
+                <div class="figure-img d-flex justify-content-center">
                   {{ specificity_svg | safe }}
                 </div>
                 <figcaption class="figure-caption text-center fw-semibold">Specificity of the models for different threshold values as reported in the tables above. Higher is better.</figcaption>

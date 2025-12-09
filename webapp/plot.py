@@ -2,10 +2,21 @@ import matplotlib.pyplot as plt
 import io
 import numpy as np
 
+
+cache = {}
+
 def render_heatmap(data, models, thresholds, title, cmap='Blues'):
+    key = (
+        tuple(data), tuple(models), tuple(thresholds), title, cmap
+    )
+
+    if key in cache:
+        return cache[key]
+
     fig, ax = plt.subplots(figsize=(len(models), len(thresholds)))
     data_array = np.array(data)
-
+    data_array = np.where(data_array == None, np.nan, data_array).astype(float)
+    
     ax.imshow(data_array, cmap=cmap, vmin=0, vmax=1)
 
     ax.set_yticks(np.arange(len(thresholds)))
@@ -26,4 +37,6 @@ def render_heatmap(data, models, thresholds, title, cmap='Blues'):
     buf = io.BytesIO()
     plt.savefig(buf, format="svg")
     plt.close(fig)
-    return buf.getvalue().decode("utf-8")
+    svg = buf.getvalue().decode("utf-8")
+    cache[key] = svg
+    return svg[svg.index('<svg'):]

@@ -30,8 +30,7 @@ CREATE TABLE jobs (
     status TEXT NOT NULL,
     time_created INTEGER NOT NULL,
     time_started INTEGER NOT NULL,
-    time_taken REAL NOT NULL,
-    num_completed INTEGER NOT NULL
+    time_taken REAL NOT NULL
 );
 
 CREATE TABLE reviews (
@@ -173,6 +172,7 @@ def remaining_items_count(job_id: str, job_k : int | None = None):
     ).fetchone()[0]
     if res is None:
         return 10 # fallback
+    return res
 
 
 if __name__ == '__main__':

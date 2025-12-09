@@ -36,6 +36,11 @@
             </a>
           </div>
   
+
+          {% if progress == 100 and job.status == 'FINISHED' %}
+          <div class="flex-grow-1 mx-3"></div>
+          <span class="badge bg-success">FINISHED</span>
+          {% else %}
           <!-- Progress Bar -->
           <div class="flex-grow-1 mx-3">
             <div class="progress" style="height: 20px;">
@@ -58,7 +63,7 @@
               </div>
             </div>
           </div>
-  
+
           <!-- ETA -->
           <div style="min-width: 80px; text-align: right;">
             {% if estimated_remaining is not none %}
@@ -67,6 +72,8 @@
               -- 
             {% endif %}
           </div>
+          {% endif %}
+  
   
         </li>
       {% else %}

@@ -18,7 +18,7 @@
 <nav class="navbar navbar-expand-lg bg-body-tertiary">
   <div class="container-fluid">
     <div class="navbar-brand">
-      <svg class="bi me-2" width="32" height="24" fill="currentColor" class="bi bi-bullseye" viewBox="0 0 16 16" style="vertical-align: -0.25em;">
+      <svg class="bi me-2 bi-bullseye" width="32" height="24" fill="currentColor" viewBox="0 0 16 16" style="vertical-align: -0.25em;">
         <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
         <path d="M8 13A5 5 0 1 1 8 3a5 5 0 0 1 0 10m0 1A6 6 0 1 0 8 2a6 6 0 0 0 0 12"/>
         <path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6m0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8"/>
@@ -45,7 +45,7 @@
     </div>
     {% if job_in_progress %}
     <div class="navbar-text">
-      Running {{ job_in_progress.name }} ETA {{ job_in_progress.eta | duration }}
+      Running {{ job_in_progress.name }} ETA {% if job_in_progress.eta %}{{ job_in_progress.eta | duration }}{% else %}N/A{% endif %}
     </div>
     {% endif %}
   </div>
