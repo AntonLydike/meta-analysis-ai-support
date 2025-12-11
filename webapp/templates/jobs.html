@@ -20,7 +20,7 @@
     <ul class="list-group">
   
       {% for job in jobs %}
-        {% set total_items = item_count * job.repeats %}
+        {% set total_items = (eval_count if job.eval_run else item_count) * job.repeats %}
         {% set completed = job.num_completed|int %}
         {% set progress = (completed / total_items * 100) if total_items > 0 else 0 %}
         {% set avg_time_per_item = (job.time_taken / completed) if completed > 0 else None %}

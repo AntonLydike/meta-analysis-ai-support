@@ -8,3 +8,7 @@ webapp.db*
 venv
 .idea
 *.xlsx
+/out
+/*.db
+/*.db-wal
+/*.db-shm

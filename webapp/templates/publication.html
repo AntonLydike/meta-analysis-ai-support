@@ -8,14 +8,14 @@
         <div class="mb-4">
             <h5>Rating:
 
-            {% if publication.human_score == 0 %}
+            {% if publication.human_score is none %}
+                <span class="badge bg-secondary">{{ publication.human_score }}</span>
+            {% elif publication.human_score == 0 %}
                 <span class="badge bg-danger">{{ publication.human_score }}</span>
             {% elif publication.human_score > 0 and publication.human_score <= 50 %}
                 <span class="badge bg-warning text-dark">{{ publication.human_score }}</span>
             {% elif publication.human_score > 50 %}
                 <span class="badge bg-success">{{ publication.human_score }}</span>
-            {% else %}
-                <span class="badge bg-secondary">{{ publication.human_score }}</span>
             {% endif %}</h5>
 
             <h5>DOI:</h5>

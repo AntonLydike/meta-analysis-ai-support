@@ -63,7 +63,7 @@ def build_jsonl_doc(job_id: str, i: int, prompt: str, model: str, elm) -> str:
 
 
 CHUNK_LIMIT = 2e8
-CHUNK_ELM_LIMIT = 50000
+CHUNK_ELM_LIMIT = 5000
 
 
 def process_batch(
@@ -119,18 +119,30 @@ def process_batch(
         print("=" * 60)
 
         # check progress:
-        while True:
-            time.sleep(5)
+        remaining_batches = set(batch_ids)
+        while remaining_batches:
+            time.sleep(30)
 
+            # get list of completed batches
             status = print_batch_status(client, batch_ids, update_job_progress, job_id, t0)
 
-            # Exit loop if all batches are done
-            if all(s.is_done for s in status):
-                print("All batches have reached a terminal state.")
-                break
+            # keep just the ones that are actually remaining to be imported
+            new_batches = [batch for batch in status if batch in remaining_batches]
 
-        # write results to database:
-        import_batch_results(client, batch_ids)
+            # if any new batches are here, import them
+            if new_batches:
+                import_batch_results(client, new_batches)            
+                # and remove them from the remaining batch list
+                remaining_batches.difference_update(new_batches)
+
+        # print batch costs to stdout
+        print(f'batch cost:', price := total_batch_price(client, model, batch_ids), sep=" ")
+
+        # write total price to db
+        conn = get_connection()
+        # use coalesce(x + ?, ?) to increment or set in case of NULL value
+        conn.execute('UPDATE jobs SET total_price = coalesce(total_price + ?, ?) WHERE job_id = ?', (price.total(), price.total(), job_id))
+
 
 
 def launch_batch(client: OpenAI, base_dir: str, batch_file: str) -> str:
@@ -204,7 +216,10 @@ class ClassificationResult:
     token_usage: dict
 
 
-def print_batch_status(client: OpenAI, batch_ids: list[str], update_job_progress = None, job_id = None, t0 = None):
+def print_batch_status(client: OpenAI, batch_ids: list[str], update_job_progress = None, job_id = None, t0 = None) -> list[str]:
+    """
+    print batch statuses and return list of finished batch ids
+    """
     status = get_batch_status(client, batch_ids)
 
     total = sum(s.total for s in status)
@@ -228,7 +243,7 @@ def print_batch_status(client: OpenAI, batch_ids: list[str], update_job_progress
     if update_job_progress:
         update_job_progress(job_id, completed + failed, time.time() - t0)
 
-    return status
+    return [s.id for s in status if s.is_done]
 
 def parse_batch_results(client: OpenAI, batch_ids: list[str]) -> Generator[ClassificationResult, None, None]:
     """
@@ -354,22 +369,60 @@ PRICES = {
     }
 }
 
-def calculate_price(model: str, usage: dict, batch: bool = True):
+@dataclass
+class BatchPrice:
+    input: float
+    output: float
+    in_cached: float
+
+    def total(self):
+        return self.input + self.output + self.in_cached
+    
+    def __add__(self, other):
+        if not isinstance(other, BatchPrice):
+            raise ValueError(other)
+        return BatchPrice(
+            self.input + other.input,
+            self.output + other.output,
+            self.in_cached + other.in_cached,
+        )
+    
+    def __mul__(self, other):
+        if not isinstance(other, (float, int)):
+            raise ValueError(other)
+        return BatchPrice(
+            self.input * other,
+            self.output * other,
+            self.in_cached * other,
+        )
+    
+    @classmethod
+    def zero(cls):
+        return cls(0,0,0)
+
+    def __str__(self):
+        return f'${self.total():.2f} (${self.input:.4f} in, ${self.output:.4f} out, ${self.in_cached:.4f} cached)'
+
+def calculate_price(model: str, usage: dict, batch: bool) -> BatchPrice:
     price = PRICES.get(model)
 
     cached = usage.get('input_tokens_details', {}).get('cached_tokens', 0)
     input = usage.get('input_tokens', 0) - cached
     output = usage.get('output_tokens')
 
-    return sum((
+    print(f'{cached / (input + cached):.2f} cached rate')
+
+    factor = 0.5 if batch else 1
+
+    return BatchPrice(
         (input / 1e6) * price.get('input'),
         (output / 1e6) * price.get('input'),
         (cached / 1e6) * price.get('input_cached'),
-    )) + 0.5 if batch else 1
+    ) * factor
 
 
-def total_batch_price(client: OpenAI, model: str, batch_ids: list[str]):
-    ttl = 0
+def total_batch_price(client: OpenAI, model: str, batch_ids: list[str]) -> BatchPrice:
+    ttl = BatchPrice.zero()
     for id in batch_ids:
         batch = client.batches.retrieve(id)
         ttl += calculate_price(model, batch.usage, batch=True)
@@ -386,6 +439,6 @@ if __name__ == '__main__':
         case ["import", *batch_ids]:
             import_batch_results(client, batch_ids)
         case ["pricing", model, *batch_ids]:
-            print(f"Total cost: ${total_batch_price(client, model, batch_ids)}")
+            print(f"Total cost: {total_batch_price(client, model, batch_ids)}")
         case default:
             print("unknown command")

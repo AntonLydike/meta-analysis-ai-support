@@ -3,7 +3,7 @@
 {% block title %}Publications Index{% endblock %}
 
 {% block head %}
-<style>.reviewer-col{writing-mode:vertical-rl;cursor: pointer;}.reviewer-col::after{content:var(--sort-char, '')}</style>
+<style>[x-order-col]{writing-mode:vertical-rl;cursor: pointer;}[x-order-col]::after{content:var(--sort-char, '')}</style>
 {% endblock %}
 
 {% block content %}
@@ -15,7 +15,8 @@
                 <tr>
                     <th>Title</th>
                     <th>Year</th>
-                    <th>Score</th>
+                    <th x-order-col="human">Human</th>
+                    <th x-order-col="ai">Model</th>
                 </tr>
             </thead>
             <tbody>
@@ -24,14 +25,25 @@
                     <td><a href="{{ url_for('publication', pub_id=pub.id) }}">{{ pub.title }}</a></td>
                     <td>{{ pub.year }}</td>
                     <td>
-                        {% if pub.human_score == 0 %}
+                        {% if pub.human_score is none %}
+                            <span class="badge bg-secondary">/</span>
+                        {% elif pub.human_score == 0 %}
                             <span class="badge bg-danger">{{ pub.human_score }}</span>
                         {% elif pub.human_score > 0 and pub.human_score <= 50 %}
                             <span class="badge bg-warning text-dark">{{ pub.human_score }}</span>
                         {% elif pub.human_score > 50 %}
                             <span class="badge bg-success">{{ pub.human_score }}</span>
-                        {% else %}
-                            <span class="badge bg-secondary">No review</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if pub.rating is none %}
+                            <span class="badge bg-secondary">/</span>
+                        {% elif pub.rating == 0 %}
+                            <span class="badge bg-danger">{{ pub.rating|int }}</span>
+                        {% elif pub.rating > 0 and pub.rating <= 50 %}
+                            <span class="badge bg-warning text-dark">{{ pub.rating|int }}</span>
+                        {% elif pub.rating > 50 %}
+                            <span class="badge bg-success">{{ pub.rating|int }}</span>
                         {% endif %}
                     </td>
                 </tr>
@@ -39,35 +51,38 @@
             </tbody>
         </table>
 
+        {% include 'pagination.html' %}
+
     </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// Bootstrap validation script
-document.querySelectorAll('.needs-validation').forEach(form => {
-form.addEventListener('submit', event => {
-    if (!form.checkValidity()) {
-    event.preventDefault()
-    event.stopPropagation()
+document.querySelectorAll('[x-order-col]').forEach(x => {
+    const search = new URLSearchParams(location.search)
+    const order = search.get('order')
+    const name = x.getAttribute('x-order-col')
+
+    if (order == name) {
+        x.style = '--sort-char: "▴"';
+        //x.prepend('▴')
+    } else if (order == '-' + name) {
+        x.style = '--sort-char: "▾"';
+        //x.prepend('▾')
     }
-    form.classList.add('was-validated')
-}, false)
+
+    x.addEventListener('click', e => {
+        e.preventDefault();
+        if(order == name) {
+            search.set('order', '-' + name)
+        } else if(order == '-' + name) {
+            search.delete('order')
+        } else {
+            search.set('order', name)
+        }
+        // update query parameters
+        window.location.search = '?' + search.toString()
+    })
 })
 </script>
-<script>
-document.querySelectorAll('.reviewer-col').forEach(x => x.addEventListener('click', e => {
-    e.preventDefault();
-    const name = x.textContent
-    const search = new URLSearchParams(location.search)
-    if (!search.get('sort')) {
-        search.set('sort', name)
-    } else if(search.get('sort') == name) {
-        search.set('sort', '-' + name)
-    } else if(search.get('sort') == '-' + name) {
-        search.delete('sort')
-    }
-    // update query parameters
-    window.location.search = '?' + search.toString()
-}))</script>
 {% endblock %}

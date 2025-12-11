@@ -1,7 +1,10 @@
-from flask import Flask, render_template, g, request, redirect, url_for, abort, flash
-from datetime import datetime
-import sqlite3
+from io import StringIO
+import json
+from flask import Flask, render_template, g, request, redirect, send_file, url_for, abort, flash, Response
+from datetime import datetime, date
+import csv
 import uuid
+import rispy
 import time
 import os
 
@@ -11,6 +14,7 @@ from webapp.plot import render_heatmap
 from aalib.duration import duration
 from webapp.oai import OPENAI_MODELS
 
+from webapp.exporter import EXPORTER
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET")
@@ -73,6 +77,7 @@ FROM aggregated
 ORDER BY sensitivity DESC;
 """
 
+ITEMS_PER_PAGE = 1000
 
 def get_available_models():
     return (
@@ -131,9 +136,30 @@ def dt(t: float | int):
 def index():
     db = get_connection()
 
+    page = request.args.get('p', 0, type=int)
+    job_id = request.args.get('job', None)
+    if job_id is None:
+        job_id = db.execute('SELECT job_id FROM reviews ORDER BY id DESC LIMIT 1').fetchone()
+        if job_id is not None:
+            job_id = job_id[0]
+
+    col_order = request.args.get('order', 'id')
+    asc_desc = 'ASC'
+    if col_order[0] == '-':
+        asc_desc = 'DESC'
+        col_order = col_order[1:]
+
+    col_order = {'human': 'p.human_score', 'ai': 'r.rating', 'id': 'p.id'}.get(col_order, None)
+
+    # catch invalid order
+    if col_order is None:
+        col_order = 'p.id'
+
     return render_template(
         'index.html',
-        publications=db.execute('SELECT * FROM publications').fetchall(),
+        publications=db.execute(f'SELECT p.*, r.rating FROM publications as p LEFT OUTER JOIN reviews as r ON p.id = r.publication_id AND r.job_id = ? ORDER BY {col_order} {asc_desc} LIMIT ? OFFSET ?', (job_id, ITEMS_PER_PAGE, ITEMS_PER_PAGE * page)).fetchall(),
+        page=page,
+        has_next=db.execute('SELECT COUNT(*) FROM publications').fetchone()[0] > (ITEMS_PER_PAGE * (page+1)),
     )
 
 
@@ -264,8 +290,8 @@ def create_job():
         job_id = str(uuid.uuid4())
         now = time.time()
         conn.execute("""
-            INSERT INTO jobs (id, name, model, prompt, repeats, status, time_created, time_started, time_taken, num_completed)
-            VALUES (?, ?, ?, ?, ?, 'WAITING', ?, 0, 0.0, '0')
+            INSERT INTO jobs (id, name, model, prompt, repeats, status, time_created, time_started, time_taken, num_completed, eval_run)
+            VALUES (?, ?, ?, ?, ?, 'WAITING', ?, 0, 0.0, '0', true)
         """, (job_id, name, model, prompt, repeats, now))
         conn.commit()
         flash("Job created successfully.", "success")
@@ -289,10 +315,19 @@ def job_detail(job_id):
         if status not in ('WAITING', 'PAUSED'):
             flash(f'Invalid Status "{status}"', 'danger')
         else:
-            conn.execute("UPDATE jobs SET status = ? WHERE id = ?", (status, job_id))
+            # set eval_mode = false if fullrun in request args
+            eval_mode = ('fullrun' not in request.args)
+            conn.execute("UPDATE jobs SET status = ?, eval_run = ? WHERE id = ?", (status, eval_mode, job_id))
+            flash(f'Launched job{' on full set' if not eval_mode else ''}', 'success')
             return redirect(url_for('job_detail', job_id=job_id))
 
-    total_items = job['repeats'] * conn.execute('SELECT COUNT(*) FROM publications').fetchone()[0]
+    page = request.args.get('p', 0, type=int)
+
+    if bool(job['eval_run']):
+        total_items = job['repeats'] * conn.execute('SELECT COUNT(*) FROM publications WHERE human_score is not null').fetchone()[0]
+    else:
+        total_items = job['repeats'] * conn.execute('SELECT COUNT(*) FROM publications').fetchone()[0]
+
     completed = int(job['num_completed'])
     progress = (completed / total_items * 100) if total_items else 0
     seconds_per_item = (job['time_taken'] / completed) if completed else 0
@@ -306,8 +341,40 @@ def job_detail(job_id):
         progress=progress,
         seconds_per_item=seconds_per_item,
         estimated_remaining=estimated_remaining,
-        reviews=conn.execute("SELECT p.id, p.title, p.year, p.human_score, r.rating as score, r.id as review_id FROM publications as p JOIN reviews as r ON r.publication_id = p.id WHERE job_id = ?", (job_id,)).fetchall()
+        reviews=conn.execute("SELECT p.id, p.title, p.year, p.human_score, r.rating as score, r.id as review_id FROM publications as p JOIN reviews as r ON r.publication_id = p.id WHERE job_id = ? ORDER BY r.rating DESC LIMIT ? OFFSET ?", (job_id, ITEMS_PER_PAGE, ITEMS_PER_PAGE * page)).fetchall(),
+        page=page,
+        has_next=conn.execute('SELECT COUNT(*) FROM reviews WHERE job_id = ?', (job_id,)).fetchone()[0] > (ITEMS_PER_PAGE * (page+1)),
+        exports=EXPORTER.get_files_for_job(job_id),
     )
+
+@app.route('/jobs/<job_id>/export')
+def export_job(job_id: str):
+    cmp = request.args.get('cutoff_mode')
+    rating = request.args.get('rating', type=int)
+    format = request.args.get('format')
+
+    if format not in ('csv', 'ris'):
+        raise ValueError(format)
+    if cmp not in ('lt', 'le', 'gt', 'ge'):
+        raise ValueError(cmp)
+    if rating > 100 or rating < 0:
+        raise ValueError(cmp)  
+
+    EXPORTER.submit(job_id, cmp, rating, format)
+
+    return redirect(url_for('job_detail', job_id=job_id))
+
+
+@app.route('/export/<uuid>')
+def download_export(uuid: str):
+    exp = EXPORTER.get(uuid)
+    if exp is None:
+        return "Not found", 404
+    if not exp.done:
+        return "Not Done Yet!"
+    
+    return send_file(os.path.join(os.getcwd(), exp.file_name()), 'application/octet-stream', as_attachment=True, download_name=f'export_{date.today():%Y-%m-%d}.{exp.format}')
+
 
 @app.route('/jobs')
 def jobs():
@@ -315,5 +382,6 @@ def jobs():
     return render_template(
         'jobs.html',
         item_count=conn.execute('SELECT COUNT(*) FROM publications').fetchone()[0],
+        eval_count=conn.execute('SELECT COUNT(*) FROM publications WHERE human_score is not null').fetchone()[0],
         jobs=conn.execute("SELECT * FROM jobs ORDER BY time_created DESC").fetchall()
     )

@@ -11,6 +11,7 @@ from aalib.colors import FMT
 SCHEMA = """
 CREATE TABLE publications (
     id INTEGER PRIMARY KEY,
+    ext_id INTEGER NOT NULL,
     title TEXT NOT NULL,
     doi TEXT NOT NULL,
     authors TEXT,
@@ -30,7 +31,18 @@ CREATE TABLE jobs (
     status TEXT NOT NULL,
     time_created INTEGER NOT NULL,
     time_started INTEGER NOT NULL,
-    time_taken REAL NOT NULL
+    time_taken REAL NOT NULL,
+    eval_run BOOLEAN NOT NULL,
+    total_price REAL,
+    num_completed INTEGER NOT NULL
+);
+
+CREATE TABLE exports (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    rating INTEGER NOT NULL,
+    comparison TEXT NOT NULL,
+    format TEXT NOT NULL
 );
 
 CREATE TABLE reviews (
@@ -44,6 +56,10 @@ CREATE TABLE reviews (
     FOREIGN KEY (publication_id) REFERENCES publications(id) ON DELETE CASCADE,
     FOREIGN KEY (job_id) REFERENCES runs(id) ON DELETE CASCADE
 );
+
+CREATE INDEX reviews_rating ON reviews(rating);
+CREATE INDEX reviews_job ON reviews(job_id);
+CREATE INDEX reviews_pub ON reviews(publication_id);
 """
 
 def initialize_db(db_path: str = 'webapp.db'):
@@ -77,24 +93,37 @@ def read_bibliography_db(source: str):
         with open(source, 'r') as bibliography_file:
             entries = rispy.load(bibliography_file)
 
-    conn = get_connection()
+    conn = get_connection('webapp_import.db')
     cur = conn.cursor()
 
-    for i, entry in progress(enumerate(entries), count=len(entries)):
+    id0 = conn.execute('SELECT MAX(id) FROM publications').fetchone()[0] + 1
+
+    existing_ids = set(r[0] for r in conn.execute('SELECT ext_id FROM publications'))
+
+    for i, entry in progress(enumerate(entries, start=id0), count=len(entries)):
+        ext_id = int(entry['id'])
+        if ext_id in existing_ids:
+            continue
+    
         cur.execute(
-            'INSERT INTO publications(id, title, doi, authors, abstract, year, raw_data, human_score, human_reason) VALUES (?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO publications(id, ext_id, title, doi, authors, abstract, year, raw_data, human_score, human_reason) VALUES (?,?,?,?,?,?,?,?,?,?)',
             (
                 i,
+                ext_id,
                 entry.get('title', ''), 
                 ensure_url(entry.get('doi', '')),
                 ', '.join(entry.get('authors', [])),
                 entry.get('abstract', ''), 
                 int(entry.get('year', 0)), 
                 json.dumps(entry),
-                -1,
+                None,
                 "",
             )
         )
+
+        if i % 1000 == 999:
+            conn.commit()
+    
     conn.commit()
 
 def ensure_url(doi: str) -> str:
@@ -144,16 +173,30 @@ def import_human_marked_irrelevant_cases(file: str):
         conn.commit()
 
 
-def items_left_in_job(job_id: str, count: int):
+def items_left_in_job(job_id: str, count: int, max_num: int = 100_000):
     conn = get_connection()
-    query = """SELECT p.*, ? - COALESCE(COUNT(r.id), 0) as num 
+
+    # check if it's an eval job (just run on the human labelled data):
+    additional_condition = ""
+    if bool(conn.execute('SELECT eval_run FROM jobs WHERE id = ?', (job_id,)).fetchone()[0]):
+        # add an additional sql condition
+        additional_condition = ' AND p.human_score IS NOT NULL'
+        print("EVAL RUN")
+
+    query = f"""SELECT p.*, ? - COALESCE(COUNT(r.id), 0) as num 
 FROM publications as p 
-LEFT JOIN reviews as r ON p.id = r.publication_id AND r.job_id = ? 
+LEFT JOIN reviews as r ON p.id = r.publication_id AND r.job_id = ?
 GROUP BY p.id 
-HAVING num > 0
-ORDER BY p.human_score DESC """
+HAVING num > 0 {additional_condition}
+ORDER BY p.human_score DESC"""
+
     for row in conn.execute(query, (count, job_id)):
         for _ in range(row['num']):
+            # honor limits
+            max_num -= 1
+            if max_num <= 0:
+                return
+
             yield row
 
 def remaining_items_count(job_id: str, job_k : int | None = None):
