@@ -2,6 +2,48 @@
 
 {% block title %}Job {{ job.name }}{% endblock %}
 
+{%block head %}
+<style>
+.barplot-container {
+    display: grid;
+    row-gap: 0.5rem;
+    width: 100%;
+}
+
+/* --- BAR ROW --- */
+.plot-val-row {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;   /* equal width columns */
+    align-items: end;         /* bars grow upward */
+    height: 200px;            /* overall plot height */
+    gap: 0.5rem;
+}
+
+.plot-bar {
+  --bar-color: #A0C3FF;
+  background: var(--bar-color);
+  height: calc(var(--value) * 100%);
+  border: 1px solid #3c68ed;
+}
+
+/* Optional: hover highlight */
+.plot-bar:hover {
+    filter: brightness(1.15);
+}
+
+/* --- LABEL ROW --- */
+.plot-lbl-row {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    text-align: center;
+    font-size: 0.875rem;
+    color: #374151;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container mt-5">
   <h2>Job: {{ job.name }}
@@ -224,8 +266,11 @@
 
   <h3 class="mt-5">Reviews</h3>
 
+  <h6 class="mt-4 text-center">Score Histogram:</h6>
+  <div id="reviews-plot" class="barplot-container mt-2"></div>
+  <script>const hist_data = {{ histogram | tojson }};</script>
     
-  <div class="table-responsive">
+  <div class="table-responsive mt-4">
     <table class="table table-bordered table-hover align-middle">
       <thead class="table-light">
           <tr>
@@ -271,4 +316,46 @@
   </div>
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+'use strict';
+function plot_hist(data, container) {
+  // plot a histogram
+  const bucket_incr = 5
+  const buckets = Array(Math.ceil(101/bucket_incr)).fill(0)
+  // fill buckets
+  data.forEach(elm => {
+    const [key, val] = elm
+    buckets[Math.floor(key / bucket_incr)] += val
+  });
+  const max = Math.max(...buckets)
+  const ttl = buckets.reduce((a, b) => a+b, 0)
+
+  const c = document.getElementById(container)
+  const vals = mkelm('div', ['plot-val-row'])
+  const labels = mkelm('div', ['plot-lbl-row'])
+  c.append(vals, labels)
+
+  buckets.forEach((count, key) => {
+    console.log(count, max, count/max)
+    const bar = mkelm('div', ['plot-bar'], {'style': `--value: ${count/max}`, 'title': `${count} (${(100*count/ttl).toFixed(2)}%)`})
+    const label = mkelm('div', ['plot-lbl'])
+    label.innerText = key * bucket_incr
+    vals.append(bar)
+    labels.append(label)
+  })
+}
+function mkelm(tag, classlist = [], attrs = {}) {
+  const elm = document.createElement(tag)
+  elm.classList.add(...classlist);
+  for (const [key, val] of Object.entries(attrs)) {
+    elm.setAttribute(key, val)
+  }
+  return elm
+}
+
+plot_hist(hist_data, 'reviews-plot')
+</script>
 {% endblock %}

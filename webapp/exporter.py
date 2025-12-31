@@ -41,7 +41,6 @@ class Exporter:
 
 
     def get_files_for_job(self, job_id: str) -> list[Export]:
-        print(self.by_job[job_id])
         return self.by_job[job_id]
 
     def submit(self, job_id: str, comparison: Literal['ge', 'gt', 'le', 'lt'], rating: int, format: Literal['csv', 'ris']) -> Export:

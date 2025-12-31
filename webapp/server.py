@@ -333,6 +333,8 @@ def job_detail(job_id):
     seconds_per_item = (job['time_taken'] / completed) if completed else 0
     estimated_remaining = (total_items - completed) * seconds_per_item if completed else None
 
+    histogram = conn.execute('SELECT rating, COUNT(rating) AS count FROM reviews WHERE job_id = ? GROUP BY rating ORDER BY rating', (job_id,)).fetchall()
+
     return render_template(
         "job_detail.html",
         job=job,
@@ -345,6 +347,7 @@ def job_detail(job_id):
         page=page,
         has_next=conn.execute('SELECT COUNT(*) FROM reviews WHERE job_id = ?', (job_id,)).fetchone()[0] > (ITEMS_PER_PAGE * (page+1)),
         exports=EXPORTER.get_files_for_job(job_id),
+        histogram=[[r['rating'], r['count']] for r in  histogram],
     )
 
 @app.route('/jobs/<job_id>/export')
