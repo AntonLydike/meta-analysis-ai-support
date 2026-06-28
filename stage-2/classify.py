@@ -355,8 +355,10 @@ class DocumentScoringSchema(BaseModel):
     classification_result: Literal[
         "Exclude: Wrong Format",
         "Exclude: Wrong Language",
-        "Exclude: Wrong Variables",
-        "Exclude: Design / Sample Mismatch",
+        "Exclude: Sample Mismatch",
+        "Exclude: Lacking SWB",
+        "Exclude: Lacking RRS",
+        "Exclude: Lacking Effect Size",
         "Include",
     ] = Field(
         ...,
@@ -367,36 +369,36 @@ class DocumentScoringSchema(BaseModel):
 PROMPT = """
 You are conducting a meta-analysis on the relationship between romantic relationship status and subjective well-being. You are performing full-text screening to decide whether to INCLUDE or EXCLUDE a given paper. Consider the following criteria carefully, you must be able to explain and justify each decision made.
 
-### Inclusion Criteria
-* Participants: Human adults (age ≥ 16).
-* Relationship Status: Must include a measure of romantic relationship status (e.g., single, partnered, dating, divorced, married, cohabiting, living alone), EVEN IF it is only used as a covariate/control variable.
-* Subjective Well-Being: Must include a measure of subjective well-being (e.g., life satisfaction, positive affect, negative affect, quality of life), EVEN IF it is only used as a covariate/control variable.
-* Variable Variance: The romantic relationship status variable CANNOT be invariant (i.e., studies where 100% of the sample shares the same status, such as all-single or all-married samples, must be excluded).
-* Document Type: Must be peer-reviewed journal articles published in English.
+### **Inclusion Criteria**
+- Participants: Human adults (age ≥ 16).
+- Relationship Status: Must include a measure of romantic relationship status (e.g., single, partnered, dating, divorced, married, cohabiting, living alone), EVEN IF it is only used as a covariate/control variable.
+- Subjective Well-Being : Must include a measure of subjective well-being (e.g., life satisfaction, positive affect, negative affect, happiness, or a validated subjective well-being scale), EVEN IF it is only used as a covariate/control variable.
+- Variable Variance: The romantic relationship status variable CANNOT be invariant (i.e., studies where 100% of the sample shares the same status, such as all-single or all-married samples, must be excluded).
+- Language: Must be peer-reviewed journal articles published in English.
 
 ### Exclusion Criteria
-* Study Type: Non-empirical or purely qualitative studies (including systematic reviews, scoping reviews, meta-analyses, commentaries, editorials, errata, and bibliometric analyses).
-* Grey Literature: Dissertations, theses, conference abstracts, and unpublished reports.
-* Sample Type: Studies based entirely on clinical samples (e.g., studies where ALL participants are cancer patients, individuals with diabetes, or clinical psychiatric patients).
-* Language: Articles that are not in english.
+- Study Type: Non-empirical or purely qualitative studies (including systematic reviews, scoping reviews, meta-analyses, commentaries, editorials, errata, and bibliometric analyses).
+- Grey Literature: Dissertations, theses, conference abstracts, and unpublished reports.
+- Sample Type: Studies based entirely on clinical samples (e.g., studies where ALL participants are cancer patients, individuals with diabetes, or clinical psychiatric patients).
+- Language: Articles that are not in English
+- Wrong Measures: Studies that measure only health-related or general quality of life (e.g., EQ-5D, EQ-VAS, SF-12, SF-36, WHOQOL, WHOQOL-BREF, SEIQoL) and not subjective well-being should be excluded unless the instrument explicitly measures life satisfaction, positive affect, negative affect, happiness, or subjective well-being.
 
 ---
 
 ### Possible Calssifacation Results:
-1) Wrong format: Select this if the work is not a peer-reviewed journal article of an empirical study (e.g., conference abstract only, dissertation, thesis, book chapter, grey literature, editorial letter, commentary, or purely qualitative research).
-2) Wrong language: The full text or core study is not in English.
-3) Missing Variables: The study lacks a measure of subjective well-being (SWB) OR lacks a measure of romantic relationship status (even if used as a covariate).
-4) Design / Sample Mismatch: The study contains any of the following statistical, methodological, or sample population flaws:
-   - Clinical sample (e.g., the study is based entirely on clinical populations, such as cancer patients or individuals with diabetes).
-   - Invariant relationship status variable (e.g., the sample is 100% married or 100% single).
-   - No effect size reported or extractable for the relationship between relationship status and SWB.
-   - Participants' age is below 16.
-5) Select for next round of review: The study meets ALL inclusion criteria and has no flaws listed above.
+1. Wrong Format: The work is not a peer-reviewed journal article of an empirical study (e.g. conference abstract only, dissertation, thesis, book chapter, grey literature, editorial letter, commentary, or purely qualitative research).
+2. Wrong Language: The full text or core study is not in English.
+3. Sample Mismatch:
+  - The participants are entirely from a clinical population (e.g., cancer patients, diabetes patients, psychiatric patients);
+  - OR participants' age is below 16.
+4. Lacking SWB: The study lacks a measure of subjective well-being (SWB) or measures unrelated quality of life measure.
+5. Lacking RRS: The study does not include any measure of romantic relationship status (RRS), OR the relationship status variable is invariant (e.g., all participants are married, widowed, or single).
+6. Lacking Effect Size: No effect size is reported or can reasonably be derived from the reported statistics (e.g., no means/SDs, correlations, regression coefficients, contingency tables, or other convertible statistics).
 
 ---
 
 ### Your Task & Output Format
-Please read the provided full text documents, paying attention to all criteria stated above. Make sure to check all possible groupds for exclusion first before considering an article for inclusion. Once a conclusion has been reached, your must respond in structured JSON respecting the provided schema.
+Please read the provided full text documents, paying attention to all criteria stated above. Make sure to check all possible reasons for exclusion first before considering an article for inclusion. Once a conclusion has been reached, you must respond in structured JSON respecting the provided schema.
 """
 
 
